@@ -64,7 +64,7 @@ pre{font-size:11px;white-space:pre-wrap;word-break:break-all;background:var(--bg
 </head>
 <body>
 <header>
-  <h1>Vaunun kojelauta <small class="muted" style="font-size:12px;font-weight:400">v5</small></h1>
+  <h1>Vaunun kojelauta <small class="muted" style="font-size:12px;font-weight:400">v6</small></h1>
   <span id="clock" class="muted"></span>
 </header>
 
@@ -237,17 +237,30 @@ async function pickDevice(opts, label){
 function errText(e){ return (e && (e.name ? e.name + ": " : "") + (e.message || e)) || "tuntematon virhe"; }
 
 // pitää yhteyden: yrittää uudelleen katkoksen jälkeen
+// Uudelleenyritys vain, jos yhteys on jo kerran toiminut (ei toistuvia pariliitospyyntöjä).
 function keepConnected(device, setup, setState){
-  let stopped = false;
+  const ctl = { stopped: false, ok: false, running: false };
   device.addEventListener("gattserverdisconnected", async () => {
-    if (stopped) return;
-    setState("wait", "Yhteys katkesi – yhdistetään uudelleen…");
-    for (let i = 0; i < 1000 && !stopped; i++){
-      await sleep(Math.min(3000 + i * 2000, 30000));
-      try { await setup(); return; } catch (e) { log(device.name, "uudelleenyhdistys epäonnistui:", e.message); }
+    if (ctl.stopped || ctl.running) return;
+    if (!ctl.ok){
+      setState("err", "Yhteys katkesi heti. Pariliitos peruttu tai väärä laite? Paina Yhdistä ja valitse toinen laite.");
+      return;
     }
+    ctl.running = true; ctl.ok = false;
+    setState("wait", "Yhteys katkesi – yhdistetään uudelleen…");
+    for (let i = 0; i < 20 && !ctl.stopped && !ctl.ok; i++){
+      await sleep(Math.min(3000 + i * 2000, 30000));
+      if (ctl.stopped) break;
+      try { await setup(); ctl.ok = true; } catch (e){ log(device.name, "uudelleenyhdistys epäonnistui:", errText(e)); }
+    }
+    ctl.running = false;
+    if (!ctl.ok && !ctl.stopped) setState("err", "Ei yhteyttä – paina Yhdistä.");
   });
-  return () => { stopped = true; };
+  return ctl;
+}
+function dropOld(o){
+  if (o.ctl) o.ctl.stopped = true;
+  try { if (o.dev && o.dev.gatt.connected) o.dev.gatt.disconnect(); } catch {}
 }
 
 // ---------- asetukset ----------
@@ -271,7 +284,7 @@ if ($("jserr").textContent.startsWith("Ladataan")){ $("jserr").innerHTML = "Sivu
 async function checkSupport(){
   for (let i = 0; i < 10 && !navigator.bluetooth; i++) await sleep(300);
   bt = navigator.bluetooth;
-  const s = ["Versio 5"];
+  const s = ["Versio 6"];
   s.push("Web Bluetooth: " + (bt ? "kyllä" : "EI"));
   if (bt){
     s.push("requestLEScan: " + (typeof bt.requestLEScan === "function" ? "kyllä" : "ei"));
@@ -419,11 +432,13 @@ async function bmsPoll(){
 }
 $("bmsBtn").onclick = async () => {
   try {
+    dropOld(bms);
     bms.dev = await pickDevice(pickOptions(
       [{ namePrefix: "WT" }, { namePrefix: "HS" }, { services: [UUID(0xfff0)] }], [UUID(0xfff0)]), "BMS");
     log("BMS: valittu", bms.dev.name, bms.dev.id);
-    keepConnected(bms.dev, bmsSetup, bmsState);
+    bms.ctl = keepConnected(bms.dev, bmsSetup, bmsState);
     await bmsSetup();
+    bms.ctl.ok = true;
   } catch (e){ log("BMS:", errText(e)); bmsState("err", "Virhe: " + errText(e)); }
 };
 
@@ -644,10 +659,12 @@ async function heatPoll(){
 }
 $("heatBtn").onclick = async () => {
   try {
+    dropOld(heat);
     heat.dev = await pickDevice(pickOptions(null, [UUID(0xffe0)]), "Lämmitin");
     log("Lämmitin: valittu", heat.dev.name, heat.dev.id);
-    keepConnected(heat.dev, heatSetup, heatState);
+    heat.ctl = keepConnected(heat.dev, heatSetup, heatState);
     await heatSetup();
+    heat.ctl.ok = true;
   } catch (e){ log("Lämmitin:", errText(e)); heatState("err", "Virhe: " + errText(e)); }
 };
 $("heatOn").onclick = () => heatSend(3, 1).catch(e => log(e.message));
