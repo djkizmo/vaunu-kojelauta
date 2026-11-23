@@ -64,7 +64,7 @@ pre{font-size:11px;white-space:pre-wrap;word-break:break-all;background:var(--bg
 </head>
 <body>
 <header>
-  <h1>Vaunun kojelauta <small class="muted" style="font-size:12px;font-weight:400">v8</small></h1>
+  <h1>Vaunun kojelauta <small class="muted" style="font-size:12px;font-weight:400">v9</small></h1>
   <span id="clock" class="muted"></span>
 </header>
 
@@ -282,7 +282,7 @@ function keepConnected(device, setup, setState){
     ctl.running = true; ctl.ok = false;
     setState("wait", "Yhteys katkesi – yhdistetään uudelleen…");
     for (let i = 0; i < 20 && !ctl.stopped && !ctl.ok; i++){
-      await sleep(Math.min(3000 + i * 2000, 30000));
+      await sleep(i === 0 ? 1000 : Math.min(2000 + i * 2000, 30000));
       if (ctl.stopped) break;
       try { await setup(); ctl.ok = true; } catch (e){ log(device.name, "uudelleenyhdistys epäonnistui:", errText(e)); }
     }
@@ -317,7 +317,7 @@ if ($("jserr").textContent.startsWith("Ladataan")){ $("jserr").innerHTML = "Sivu
 async function checkSupport(){
   for (let i = 0; i < 10 && !navigator.bluetooth; i++) await sleep(300);
   bt = navigator.bluetooth;
-  const s = ["Versio 8"];
+  const s = ["Versio 9"];
   s.push("Web Bluetooth: " + (bt ? "kyllä" : "EI"));
   if (bt){
     s.push("requestLEScan: " + (typeof bt.requestLEScan === "function" ? "kyllä" : "ei"));
@@ -359,18 +359,16 @@ function parseTdt(m, m8d, v1){
   const temps = [];
   for (let j = 0; j < t; j++){ const v = u16be(m, 10 + 2 * n + 2 * j); if (v) temps.push((v - 2730) / 10); }
   const S = 10 + 2 * n + 2 * t;
-  if (m.length < S + 16) throw new Error("lyhyt 8C-viesti (kentät)");
-  const cur = u16be(m, S), sign = (cur >> 15) ? -1 : 1;
-  const r = {
-    cells, temps,
-    voltage: u16be(m, S + 2) / 100,
-    current: v1 ? (cur & 0x3FFF) * sign : (cur & 0x3FFF) / 10 * sign,
-    charge: v1 ? u16be(m, S + 4) : u16be(m, S + 4) / 10,
-    cycles: u16be(m, S + 8),
-    capacity: v1 ? u16be(m, S + 10) : Math.floor(u16be(m, S + 10) / 10),
-    soc: u16be(m, S + 12),
-    health: u16be(m, S + 14),
-  };
+  const has = off => m.length >= S + off + 2; // luetaan vain kentät, jotka viestissä on
+  const r = { cells, temps, voltage: null, current: null, charge: null, cycles: null, capacity: null, soc: null, health: null };
+  if (has(0)){ const cur = u16be(m, S), sign = (cur >> 15) ? -1 : 1; r.current = v1 ? (cur & 0x3FFF) * sign : (cur & 0x3FFF) / 10 * sign; }
+  if (has(2)) r.voltage = u16be(m, S + 2) / 100;
+  if (has(4)) r.charge = v1 ? u16be(m, S + 4) : u16be(m, S + 4) / 10;
+  if (has(8)) r.cycles = u16be(m, S + 8);
+  if (has(10)) r.capacity = v1 ? u16be(m, S + 10) : Math.floor(u16be(m, S + 10) / 10);
+  if (has(12)) r.soc = u16be(m, S + 12);
+  if (has(14)) r.health = u16be(m, S + 14);
+  if (r.voltage === null && cells.length) r.voltage = cells.reduce((a, b) => a + b, 0);
   const idx = n + t;
   if (m8d && m8d.length > 16 + idx){
     r.problem = u16be(m8d, 14 + idx);
@@ -445,13 +443,18 @@ async function bmsPoll(){
   try {
     const m = await bmsAsk(0x8C);
     let m8d = null; try { m8d = await bmsAsk(0x8D); } catch {}
+    if ((bms.rawLogged = (bms.rawLogged || 0) + 1) <= 2){
+      log("BMS 8C (" + m.length + " t):", hex(m));
+      if (m8d) log("BMS 8D (" + m8d.length + " t):", hex(m8d));
+    }
     const r = parseTdt(m, m8d, bms.v1);
-    $("bmsSoc").textContent = r.soc; $("bmsBar").style.width = Math.min(100, r.soc) + "%";
+    $("bmsSoc").textContent = r.soc ?? "–"; $("bmsBar").style.width = Math.min(100, r.soc || 0) + "%";
     $("bmsBar").style.background = r.soc < 20 ? "var(--bad)" : r.soc < 40 ? "var(--warn)" : "var(--ok)";
     $("bmsV").textContent = fmt(r.voltage, 2); $("bmsA").textContent = fmt(r.current, 1);
-    $("bmsW").textContent = fmt(r.voltage * r.current, 0); $("bmsAh").textContent = fmt(r.charge, 1);
+    $("bmsW").textContent = (r.voltage !== null && r.current !== null) ? fmt(r.voltage * r.current, 0) : "–";
+    $("bmsAh").textContent = fmt(r.charge, 1);
     $("bmsT").textContent = r.temps.length ? r.temps.map(x => x.toFixed(0)).join(" / ") : "–";
-    $("bmsCyc").textContent = r.cycles;
+    $("bmsCyc").textContent = r.cycles ?? "–";
     const mn = Math.min(...r.cells), mx = Math.max(...r.cells);
     $("bmsCells").innerHTML = r.cells.map(v => `<span>${v.toFixed(3)}</span>`).join("") +
       (r.cells.length ? `<span>Δ ${((mx - mn) * 1000).toFixed(0)} mV</span>` : "");
@@ -682,14 +685,16 @@ async function heatSend(cmd, arg){
   if (!heat.ch) return;
   const f = heaterCmd(cmd, arg);
   if (cmd !== 1 || heat.rxCount === 0) log("Lämmitin →", hex(f));
-  await writeChar(heat.ch, f);
+  // aikaraja, ettei jumittunut kirjoitus pysäytä kyselyä
+  await Promise.race([writeChar(heat.ch, f), sleep(4000).then(() => { throw new Error("kirjoitus aikakatkaistiin"); })]);
 }
 async function heatSubscribe(svc){
   for (const c of heat.notifyChars){ try { c.removeEventListener("characteristicvaluechanged", heatNotify); } catch {} }
   heat.notifyChars = [];
   const chars = await svc.getCharacteristics();
-  log("Lämmitin: ominaisuudet", chars.map(c => c.uuid.slice(4, 8) + "[" +
+  if (!heat.charsLogged) log("Lämmitin: ominaisuudet", chars.map(c => String(c.uuid) + "[" +
     ["read", "write", "writeWithoutResponse", "notify", "indicate"].filter(p => c.properties[p]).join(",") + "]").join(" "));
+  heat.charsLogged = true;
   for (const c of chars){
     if (!(c.properties.notify || c.properties.indicate)) continue;
     c.addEventListener("characteristicvaluechanged", heatNotify);
@@ -714,13 +719,8 @@ async function heatPoll(){
   clearTimeout(heat.timer);
   if (!heat.dev?.gatt.connected){ heatButtons(false); return; }
   try { await heatSend(1, 0); } catch (e){ log("Lämmitin: kirjoitus epäonnistui –", errText(e)); }
-  // ei vastausta? tilataan ilmoitukset uudelleen (esim. pariliitoksen jälkeen)
-  if (Date.now() - heat.lastRx > 9000 && Date.now() - heat.resubAt > 9000 && heat.svc){
-    heat.resubAt = Date.now();
-    log("Lämmitin: ei vastausta – tilataan ilmoitukset uudelleen");
-    try { await heatSubscribe(heat.svc); } catch (e){ log("Lämmitin: uudelleentilaus epäonnistui –", errText(e)); }
-    if (!heat.lastRx) heatState("wait", "Yhdistetty, mutta lämmitin ei vastaa. Tarkista PIN (Asetukset) ja että AirHeaterBLE on suljettu.");
-  }
+  if (!heat.lastRx && Date.now() - heat.connectedAt > 12000)
+    heatState("wait", "Yhdistetty, mutta lämmitin ei vastaa. Tarkista PIN (Asetukset) ja että AirHeaterBLE on suljettu.");
   heat.timer = setTimeout(heatPoll, 3000);
 }
 $("heatBtn").onclick = async () => {
