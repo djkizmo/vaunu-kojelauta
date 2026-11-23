@@ -64,7 +64,7 @@ pre{font-size:11px;white-space:pre-wrap;word-break:break-all;background:var(--bg
 </head>
 <body>
 <header>
-  <h1>Vaunun kojelauta <small class="muted" style="font-size:12px;font-weight:400">v11</small></h1>
+  <h1>Vaunun kojelauta <small class="muted" style="font-size:12px;font-weight:400">v12</small></h1>
   <span id="clock" class="muted"></span>
 </header>
 
@@ -82,6 +82,13 @@ window.onerror = function (msg, src, line, col, err) {
 
 <div id="nobt" class="warnbox"></div>
 <p id="supportTop" class="muted" style="font-size:11px;margin:-4px 0 10px"></p>
+<div id="autoBar" class="card" style="display:none;margin-bottom:12px;padding:10px 14px">
+  <div class="top" style="margin-bottom:4px">
+    <span class="muted" id="autoSaved" style="font-size:13px"></span>
+    <button id="connectAllBtn">Yhdistä kaikki</button>
+  </div>
+  <div class="status" id="autoStatus" style="margin-top:0"></div>
+</div>
 
 <div class="grid">
   <!-- AKKU -->
@@ -201,7 +208,7 @@ window.onerror = function (msg, src, line, col, err) {
   <label>Lämmittimen PIN (oletus 1234)
     <input type="number" id="heatPin" inputmode="numeric" value="1234"></label>
   <label class="check"><input type="checkbox" id="filterList"> Näytä valintalistassa vain todennäköiset laitteet (kokeellinen)</label>
-  <div class="ctl"><button id="saveBtn">Tallenna</button><span class="muted" id="saved"></span></div>
+  <div class="ctl"><button id="saveBtn">Tallenna</button><button id="forgetBtn" class="ghost">Unohda muistetut laitteet</button><span class="muted" id="saved"></span></div>
   <p class="muted" style="font-size:12px">Avaimet tallennetaan vain tähän puhelimeen (selaimen muistiin), ei minnekään muualle.</p>
 </details>
 
@@ -325,7 +332,7 @@ if ($("jserr").textContent.startsWith("Ladataan")){ $("jserr").innerHTML = "Sivu
 async function checkSupport(){
   for (let i = 0; i < 10 && !navigator.bluetooth; i++) await sleep(300);
   bt = navigator.bluetooth;
-  const s = ["Versio 11"];
+  const s = ["Versio 12"];
   s.push("Web Bluetooth: " + (bt ? "kyllä" : "EI"));
   if (bt){
     s.push("requestLEScan: " + (typeof bt.requestLEScan === "function" ? "kyllä" : "ei"));
@@ -474,16 +481,25 @@ async function bmsPoll(){
   } catch (e){ log("BMS:", e.message); bmsState("wait", "Ei vastausta: " + e.message); }
   bms.timer = setTimeout(bmsPoll, 4000);
 }
-$("bmsBtn").onclick = async () => {
+async function bmsUse(dev){
   try {
     dropOld(bms);
-    bms.dev = await pickDevice(pickOptions(
-      [{ namePrefix: "WT" }, { namePrefix: "HS" }, { services: [UUID(0xfff0)] }], [UUID(0xfff0)]), "BMS");
-    log("BMS: valittu", bms.dev.name, bms.dev.id);
+    bms.dev = dev;
     bms.ctl = keepConnected(bms.dev, bmsSetup, bmsState);
     await bmsSetup();
     bms.ctl.ok = true;
-  } catch (e){ log("BMS:", errText(e)); bmsState("err", "Virhe: " + errText(e)); }
+    return true;
+  } catch (e){ log("BMS:", errText(e)); bmsState("err", "Virhe: " + errText(e)); return false; }
+}
+$("bmsBtn").onclick = async () => {
+  let dev;
+  try {
+    dev = await pickDevice(pickOptions(
+      [{ namePrefix: "WT" }, { namePrefix: "HS" }, { services: [UUID(0xfff0)] }], [UUID(0xfff0)]), "BMS");
+  } catch (e){ log("BMS:", errText(e)); bmsState("err", "Virhe: " + errText(e)); return; }
+  log("BMS: valittu", dev.name, dev.id);
+  remember("bms", dev);
+  await bmsUse(dev);
 };
 
 // =====================================================================
@@ -657,15 +673,23 @@ $("vicBtn").onclick = async () => {
     const dev = await bt.requestDevice(pickOptions(
       [{ namePrefix: "SmartSolar" }, { namePrefix: "Blue Smart" }, { namePrefix: "BlueSmart" }, { namePrefix: "Smart" },
        { manufacturerData: [{ companyIdentifier: 0x02E1 }] }], [], [0x02E1]));
-    if (typeof dev.watchAdvertisements !== "function") throw new Error("selain ei tue mainosten kuuntelua");
-    dev.addEventListener("advertisementreceived", onAdvert);
-    await dev.watchAdvertisements();
-    log("Victron: kuunnellaan laitetta", dev.name);
-    $("mpptStatus").textContent = "Kuunnellaan " + (dev.name || "laitetta") + "…";
-    setTimeout(() => { if (!advCount) log("Victron: 20 s ilman yhtään lähetystä – selain ei ehkä välitä mainoksia"); }, 20000);
-    $("vicBtn").textContent = "Lisää toinen Victron";
-  } catch (e){ log("Victron:", e.message); $("mpptStatus").textContent = "Virhe: " + e.message; dot("mpptDot", "err"); }
+    rememberVic(dev);
+    await vicUse(dev);
+  } catch (e){ log("Victron:", errText(e)); $("mpptStatus").textContent = "Virhe: " + errText(e); dot("mpptDot", "err"); }
 };
+const vicWatching = new Set();
+async function vicUse(dev){
+  if (typeof dev.watchAdvertisements !== "function") throw new Error("selain ei tue mainosten kuuntelua");
+  if (vicWatching.has(dev.id)) return true;
+  dev.addEventListener("advertisementreceived", onAdvert);
+  await dev.watchAdvertisements();
+  vicWatching.add(dev.id);
+  log("Victron: kuunnellaan laitetta", dev.name);
+  if (!advCount) $("mpptStatus").textContent = "Kuunnellaan " + (dev.name || "laitetta") + "…";
+  setTimeout(() => { if (!advCount) log("Victron: 20 s ilman yhtään lähetystä – selain ei ehkä välitä mainoksia"); }, 20000);
+  $("vicBtn").textContent = "Lisää toinen Victron";
+  return true;
+}
 
 // =====================================================================
 // LÄMMITIN – Vevor / AirHeaterBLE (AA55/AA66; bderleta/vevor-ble-bridge)
@@ -790,15 +814,23 @@ async function heatPoll(){
     heatState("wait", "Yhdistetty, mutta lämmitin ei vastaa. Tarkista PIN (Asetukset) ja että AirHeaterBLE on suljettu.");
   heat.timer = setTimeout(heatPoll, 3000);
 }
-$("heatBtn").onclick = async () => {
+async function heatUse(dev){
   try {
     dropOld(heat);
-    heat.dev = await pickDevice(pickOptions(null, [UUID(0xffe0)]), "Lämmitin");
-    log("Lämmitin: valittu", heat.dev.name, heat.dev.id);
+    heat.dev = dev;
     heat.ctl = keepConnected(heat.dev, heatSetup, heatState);
     await heatSetup();
     heat.ctl.ok = true;
-  } catch (e){ log("Lämmitin:", errText(e)); heatState("err", "Virhe: " + errText(e)); }
+    return true;
+  } catch (e){ log("Lämmitin:", errText(e)); heatState("err", "Virhe: " + errText(e)); return false; }
+}
+$("heatBtn").onclick = async () => {
+  let dev;
+  try { dev = await pickDevice(pickOptions(null, [UUID(0xffe0)]), "Lämmitin"); }
+  catch (e){ log("Lämmitin:", errText(e)); heatState("err", "Virhe: " + errText(e)); return; }
+  log("Lämmitin: valittu", dev.name, dev.id);
+  remember("heat", dev);
+  await heatUse(dev);
 };
 $("heatOn").onclick = () => heatSend(3, 1).catch(e => log(e.message));
 $("heatOff").onclick = () => heatSend(3, 0).catch(e => log(e.message));
@@ -932,16 +964,24 @@ async function frPoll(){
     frState("wait", "Yhdistetty, mutta laukku ei vastaa. Sulje CarFridgeFreezer-sovellus.");
   fr.timer = setTimeout(frPoll, 3000);
 }
-$("frBtn").onclick = async () => {
+async function frUse(dev){
   try {
     dropOld(fr);
-    fr.dev = await pickDevice(pickOptions([{ namePrefix: "A1-" }, { namePrefix: "AK" }, { namePrefix: "WT-" }, { services: [UUID(0x1234)] }], [UUID(0x1234)]), "Kylmälaukku");
-    log("Kylmälaukku: valittu", fr.dev.name, fr.dev.id);
+    fr.dev = dev;
     fr.since = 0; fr.lastRx = 0;
     fr.ctl = keepConnected(fr.dev, frSetup, frState);
     await frSetup();
     fr.ctl.ok = true;
-  } catch (e){ log("Kylmälaukku:", errText(e)); frState("err", "Virhe: " + errText(e)); }
+    return true;
+  } catch (e){ log("Kylmälaukku:", errText(e)); frState("err", "Virhe: " + errText(e)); return false; }
+}
+$("frBtn").onclick = async () => {
+  let dev;
+  try { dev = await pickDevice(pickOptions([{ namePrefix: "A1-" }, { namePrefix: "AK" }, { namePrefix: "WT-" }, { services: [UUID(0x1234)] }], [UUID(0x1234)]), "Kylmälaukku"); }
+  catch (e){ log("Kylmälaukku:", errText(e)); frState("err", "Virhe: " + errText(e)); return; }
+  log("Kylmälaukku: valittu", dev.name, dev.id);
+  remember("fr", dev);
+  await frUse(dev);
 };
 function frChange(fn){
   if (!fr.last){ frState("wait", "Odota ensin lukemia."); return; }
@@ -970,11 +1010,81 @@ function frAdjustRight(delta){
 $("frUp2").onclick = () => frAdjustRight(1);
 $("frDown2").onclick = () => frAdjustRight(-1);
 
+// =====================================================================
+// AUTOMAATTINEN YHDISTÄMINEN – muistetaan valitut laitteet (bluetooth.getDevices)
+// =====================================================================
+function remember(role, dev){ store.set("dev." + role, JSON.stringify({ id: dev.id, name: dev.name || "" })); updateAutoUi(); }
+function recalled(role){ try { return JSON.parse(store.get("dev." + role, "null")); } catch { return null; } }
+function rememberVic(dev){
+  const list = recalledVic().filter(v => v.id !== dev.id && (!dev.name || v.name !== dev.name));
+  list.push({ id: dev.id, name: dev.name || "" });
+  store.set("dev.vic", JSON.stringify(list)); updateAutoUi();
+}
+function recalledVic(){ try { return JSON.parse(store.get("dev.vic", "[]")) || []; } catch { return []; } }
+function savedCount(){ return ["bms", "heat", "fr"].filter(r => recalled(r)).length + recalledVic().length; }
+function updateAutoUi(){
+  const n = savedCount();
+  $("autoBar").style.display = n ? "" : "none";
+  const names = [["bms", "akku"], ["heat", "lämmitin"], ["fr", "kylmälaukku"]].filter(([r]) => recalled(r)).map(([, l]) => l);
+  if (recalledVic().length) names.push("Victron ×" + recalledVic().length);
+  $("autoSaved").textContent = "Muistetut: " + names.join(", ");
+}
+let connectingAll = false;
+async function connectAll(byUser){
+  if (connectingAll) return;
+  if (!bt || typeof bt.getDevices !== "function"){
+    $("autoStatus").textContent = "Selain ei tue automaattista yhdistämistä – valitse laitteet korteilta.";
+    return;
+  }
+  connectingAll = true;
+  $("autoStatus").textContent = "Yhdistetään muistettuihin laitteisiin…";
+  try {
+    const devs = await bt.getDevices();
+    log("Automaattinen: selain muistaa", devs.length, "laitetta:", devs.map(d => d.name || d.id).join(", "));
+    const find = s => s && (devs.find(d => d.id === s.id) || (s.name ? devs.find(d => d.name === s.name) : null));
+    const jobs = [];
+    const roles = [["bms", bms, bmsUse, "akku"], ["heat", heat, heatUse, "lämmitin"], ["fr", fr, frUse, "kylmälaukku"]];
+    const missing = [];
+    for (const [role, obj, use, label] of roles){
+      const s = recalled(role); if (!s) continue;
+      if (obj.dev && obj.dev.gatt && obj.dev.gatt.connected) continue;
+      const d = find(s);
+      if (d) jobs.push(use(d).then(ok => ok ? null : label)); else missing.push(label);
+    }
+    const vic = recalledVic();
+    if (vic.length){
+      if (!(await getVictronKeys()).length) missing.push("Victron (avain puuttuu)");
+      else for (const s of vic){
+        const d = find(s);
+        if (!d){ missing.push(s.name || "Victron"); continue; }
+        jobs.push(vicUse(d).then(() => null, e => { log("Victron:", errText(e)); return (s.name || "Victron") + (byUser ? "" : " (paina Yhdistä kaikki)"); }));
+      }
+    }
+    const failed = (await Promise.all(jobs)).filter(Boolean);
+    const bad = missing.concat(failed);
+    $("autoStatus").textContent = bad.length
+      ? "Ei yhdistetty: " + bad.join(", ") + (missing.length ? ". Valitse puuttuvat kerran korteilta (ja salli taustayhteydet)." : "")
+      : "Kaikki muistetut laitteet yhdistetty.";
+  } catch (e){
+    log("Automaattinen:", errText(e));
+    $("autoStatus").textContent = "Automaattinen yhdistäminen epäonnistui: " + errText(e);
+  } finally { connectingAll = false; }
+}
+$("connectAllBtn").onclick = () => connectAll(true);
+$("forgetBtn").onclick = () => {
+  for (const k of ["dev.bms", "dev.heat", "dev.fr", "dev.vic"]) { try { localStorage.removeItem("vaunu." + k); } catch {} }
+  updateAutoUi(); $("autoStatus").textContent = "";
+  $("saved").textContent = "Laitteet unohdettu";
+  setTimeout(() => $("saved").textContent = "", 2000);
+};
+updateAutoUi();
+setTimeout(() => { if (bt && savedCount()) connectAll(false); }, 1500); // odotetaan, että Bluetooth on valmis
+
 // offline-välimuisti (jos selain tukee)
 if ("serviceWorker" in navigator && window.isSecureContext) navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then(r => r.update()).catch(() => {});
 
 // testikäyttöön
-window.__test = { victronMfr, toBytes, frFrame, frDecode, frBuildSet, tdtCmd, crcModbus, parseTdt, parseSolar, parseAc, parseHeater, heaterCmd, victronDecrypt, xor48, store, getVictronKeys, resetKeys: () => { victronKeys = null; }, onAdvert };
+window.__test = { connectAll, recalled, recalledVic, victronMfr, toBytes, frFrame, frDecode, frBuildSet, tdtCmd, crcModbus, parseTdt, parseSolar, parseAc, parseHeater, heaterCmd, victronDecrypt, xor48, store, getVictronKeys, resetKeys: () => { victronKeys = null; }, onAdvert };
 window.addEventListener("unhandledrejection", e => log("Käsittelemätön virhe:", errText(e.reason)));
 })();
 </script>
