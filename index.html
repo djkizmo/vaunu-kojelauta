@@ -64,7 +64,7 @@ pre{font-size:11px;white-space:pre-wrap;word-break:break-all;background:var(--bg
 </head>
 <body>
 <header>
-  <h1>Vaunun kojelauta <small class="muted" style="font-size:12px;font-weight:400">v6</small></h1>
+  <h1>Vaunun kojelauta <small class="muted" style="font-size:12px;font-weight:400">v7</small></h1>
   <span id="clock" class="muted"></span>
 </header>
 
@@ -166,7 +166,7 @@ window.onerror = function (msg, src, line, col, err) {
     <input type="text" id="keyAc" autocomplete="off" spellcheck="false"></label>
   <label>Lämmittimen PIN (oletus 1234)
     <input type="number" id="heatPin" inputmode="numeric" value="1234"></label>
-  <label class="check"><input type="checkbox" id="showAll"> Näytä kaikki Bluetooth-laitteet valintalistassa</label>
+  <label class="check"><input type="checkbox" id="filterList"> Näytä valintalistassa vain todennäköiset laitteet (kokeellinen)</label>
   <div class="ctl"><button id="saveBtn">Tallenna</button><span class="muted" id="saved"></span></div>
   <p class="muted" style="font-size:12px">Avaimet tallennetaan vain tähän puhelimeen (selaimen muistiin), ei minnekään muualle.</p>
 </details>
@@ -210,7 +210,8 @@ async function writeChar(ch, data){
 function pickOptions(filters, services, mfr){
   const o = { optionalServices: services };
   if (mfr) o.optionalManufacturerData = mfr;
-  if ($("showAll").checked || !filters) o.acceptAllDevices = true; else o.filters = filters;
+  // Bluefy ei hyväksy kaikkia suodattimia luotettavasti → näytetään kaikki laitteet, ellei käyttäjä halua suodattaa
+  if (!$("filterList").checked || !filters) o.acceptAllDevices = true; else o.filters = filters;
   return o;
 }
 // Laitehaku: jos selain hylkää asetukset, kokeillaan yksinkertaisemmin
@@ -229,12 +230,18 @@ async function pickDevice(opts, label){
       log(label + ": laitehaku epäonnistui –", e.name + ":", e.message);
       // käyttäjä perui tai laitetta ei löytynyt listasta → ei yritetä muilla asetuksilla
       if (e.name === "NotFoundError" && /cancel|peru/i.test(e.message)) break;
+      if (!e || (!e.name && !e.message)) break; // Bluefy: käyttäjä sulki listan (virhe ilman tietoja)
+      if (e.name !== "TypeError") break; // vain virheelliset hakuasetukset yritetään uudelleen
       if (e.name === "SecurityError") break;
     }
   }
   throw last;
 }
-function errText(e){ return (e && (e.name ? e.name + ": " : "") + (e.message || e)) || "tuntematon virhe"; }
+function errText(e){
+  if (e === undefined || e === null) return "tuntematon virhe";
+  if (typeof e !== "object") return "koodi " + String(e);
+  return ((e.name ? e.name + ": " : "") + (e.message || "")).trim() || ("tuntematon virhe " + JSON.stringify(e));
+}
 
 // pitää yhteyden: yrittää uudelleen katkoksen jälkeen
 // Uudelleenyritys vain, jos yhteys on jo kerran toiminut (ei toistuvia pariliitospyyntöjä).
@@ -267,11 +274,11 @@ function dropOld(o){
 $("keyMppt").value = store.get("keyMppt", "");
 $("keyAc").value = store.get("keyAc", "");
 $("heatPin").value = store.get("heatPin", "1234");
-$("showAll").checked = store.get("showAll", "0") === "1";
+$("filterList").checked = store.get("filterList", "0") === "1";
 $("saveBtn").onclick = () => {
   for (const k of ["keyMppt", "keyAc"]) $(k).value = $(k).value.replace(/[^0-9a-f]/gi, "").toLowerCase();
   store.set("keyMppt", $("keyMppt").value); store.set("keyAc", $("keyAc").value);
-  store.set("heatPin", $("heatPin").value); store.set("showAll", $("showAll").checked ? "1" : "0");
+  store.set("heatPin", $("heatPin").value); store.set("filterList", $("filterList").checked ? "1" : "0");
   victronKeys = null;
   $("saved").textContent = "Tallennettu";
   setTimeout(() => $("saved").textContent = "", 2000);
@@ -284,7 +291,7 @@ if ($("jserr").textContent.startsWith("Ladataan")){ $("jserr").innerHTML = "Sivu
 async function checkSupport(){
   for (let i = 0; i < 10 && !navigator.bluetooth; i++) await sleep(300);
   bt = navigator.bluetooth;
-  const s = ["Versio 6"];
+  const s = ["Versio 7"];
   s.push("Web Bluetooth: " + (bt ? "kyllä" : "EI"));
   if (bt){
     s.push("requestLEScan: " + (typeof bt.requestLEScan === "function" ? "kyllä" : "ei"));
@@ -572,8 +579,11 @@ const HEAT_ERR = ["","Käynnistys epäonnistui","Polttoaine loppu","Jännite lii
   "Tuloanturin vika","Pumpun vika","Puhaltimen vika","Hehkutulpan vika","Ylikuumeneminen","Ylikuumenemisanturin vika"];
 const HEAT_ERR_ALT = ["","Jännite liian korkea","","Hehkutulpan vika","Pumpun vika","Ylikuumeneminen",
   "Puhaltimen vika","","Polttoaine loppu","Ylikuumenemisanturin vika","Käynnistys epäonnistui"];
-const XKEY = [112, 97, 115, 115, 119, 111, 114, 100]; // "password"
-const xor48 = b => b.map((x, i) => x ^ XKEY[i % 8]);
+// XOR-avaimet 48-tavuisille (salatuille) vastauksille; lähteet ovat eri mieltä, joten kokeillaan molempia
+const XKEYS = [[112, 97, 115, 115, 119, 111, 114, 100] /* "password" */, [49, 50, 51, 52, 53, 54, 55, 56] /* "12345678" */];
+const xorWith = (b, k) => b.map((x, i) => x ^ k[i % 8]);
+const xor48 = b => xorWith(b, XKEYS[0]);
+const isHdr = (a, b) => a === 0xAA && (b === 0x55 || b === 0x66);
 function heaterCmd(cmd, arg){
   const pin = parseInt(store.get("heatPin", "1234"), 10) || 1234;
   const p = [0xAA, 0x55, Math.floor(pin / 100) & 0xFF, pin % 100, cmd & 0xFF, arg & 0xFF, (arg >> 8) & 0xFF, 0];
@@ -584,13 +594,18 @@ const s16le = (b, i) => ((b[i] | (b[i + 1] << 8)) << 16) >> 16;
 const s16be = (b, i) => (((b[i] << 8) | b[i + 1]) << 16) >> 16;
 function parseHeater(b){
   let enc = false;
-  if (b.length >= 48 && !(b[0] === 0xAA && (b[1] === 0x55 || b[1] === 0x66))){ b = xor48(b); enc = true; }
+  if (b.length >= 48 && !isHdr(b[0], b[1])){
+    const k = XKEYS.find(k => isHdr(b[0] ^ k[0], b[1] ^ k[1]));
+    if (!k) return null;
+    b = xorWith(b.slice(0, 48), k); enc = true;
+  }
   if (b[0] !== 0xAA || b.length < 17) return null;
   const type = b[1] === 0x66 ? "AA66" : b[1] === 0x55 ? "AA55" : null;
   if (!type) return null;
   const r = { type, enc, on: b[3] === 1, step: b[5], mode: b[8] };
   if (enc){
-    r.err = HEAT_ERR[b[35]] ?? ("#" + b[35]);
+    const ec = type === "AA66" ? (b[35] & 0x3F) : b[4];
+    r.err = HEAT_ERR[ec] ?? ("#" + ec);
     r.setTemp = b[9]; r.setLevel = b[10];
     r.volt = ((b[11] << 8) | b[12]) / 10;
     r.caseT = s16be(b, 13);
@@ -606,55 +621,80 @@ function parseHeater(b){
   }
   return r;
 }
-const heat = { dev: null, ch: null, buf: null, last: null, timer: null, busy: false };
+const heat = { dev: null, ch: null, notifyChars: [], buf: null, last: null, timer: null, lastRx: 0, connectedAt: 0, resubAt: 0, rxCount: 0 };
 function heatState(s, txt){ dot("heatDot", s); if (txt) $("heatStatus").textContent = txt; }
 function heatButtons(on){ for (const b of ["heatOn", "heatOff", "heatDown", "heatUp", "heatMode"]) $(b).disabled = !on; }
 function heatNotify(e){
   const v = e.target.value;
   const d = new Uint8Array(v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength));
+  heat.lastRx = Date.now();
+  if (heat.rxCount++ < 6) log("Lämmitin ←", d.length + " t:", hex(d)); // ensimmäiset vastaukset lokiin raakana
   let frame = null;
-  if (d[0] === 0xAA && (d[1] === 0x55 || d[1] === 0x66) && d.length >= 17){ frame = d; heat.buf = null; }
+  if (isHdr(d[0], d[1]) && d.length >= 17 && d.length < 48){ frame = d; heat.buf = null; }
   else {
-    const x0 = d[0] ^ XKEY[0], x1 = d[1] ^ XKEY[1];
-    if (x0 === 0xAA && (x1 === 0x55 || x1 === 0x66)) heat.buf = d;
+    const starts = d.length >= 2 && (isHdr(d[0], d[1]) || XKEYS.some(k => isHdr(d[0] ^ k[0], d[1] ^ k[1])));
+    if (starts) heat.buf = d;
     else if (heat.buf){ const n = new Uint8Array(heat.buf.length + d.length); n.set(heat.buf); n.set(d, heat.buf.length); heat.buf = n; }
     else { log("Lämmitin: tuntematon", hex(d)); return; }
-    if (heat.buf.length >= 48){ frame = heat.buf.slice(0, 48); heat.buf = null; } else return;
+    if (heat.buf.length >= 48){ frame = heat.buf.slice(0, 48); heat.buf = null; }
+    else if (isHdr(heat.buf[0], heat.buf[1]) && heat.buf.length >= 17 && heat.buf.length <= 20){ frame = heat.buf; heat.buf = null; }
+    else return;
   }
   const r = parseHeater(frame);
-  if (!r){ log("Lämmitin: ei tulkittu", hex(frame)); return; }
+  if (!r){ log("Lämmitin: ei tulkittu", frame.length + " t:", hex(frame)); return; }
   heat.last = r;
   $("heatRoom").textContent = fmt(r.room, Number.isInteger(r.room) ? 0 : 1);
   $("heatState").textContent = r.on ? (HEAT_STEP[r.step] || "Käy") : "Pois";
   if (r.mode === 2){ $("heatSetLbl").textContent = "Tavoite °C"; $("heatSet").textContent = r.setTemp ?? "–"; }
   else { $("heatSetLbl").textContent = "Teho (taso)"; $("heatSet").textContent = r.setLevel ?? "–"; }
   $("heatV").textContent = fmt(r.volt, 1); $("heatCase").textContent = r.caseT;
-  heatState(r.err ? "err" : (r.on ? "on" : "on"),
+  heatState(r.err ? "err" : "on",
     (r.err ? "⚠ " + r.err + " · " : "") + (r.mode === 2 ? "Lämpötilatila" : "Tehotila") + " · " + r.type + (r.enc ? " (salattu)" : "") +
     " · " + new Date().toTimeString().slice(0, 8));
 }
 async function heatSend(cmd, arg){
   if (!heat.ch) return;
   const f = heaterCmd(cmd, arg);
-  log("Lämmitin →", hex(f));
+  if (cmd !== 1 || heat.rxCount === 0) log("Lämmitin →", hex(f));
   await writeChar(heat.ch, f);
+}
+async function heatSubscribe(svc){
+  for (const c of heat.notifyChars){ try { c.removeEventListener("characteristicvaluechanged", heatNotify); } catch {} }
+  heat.notifyChars = [];
+  const chars = await svc.getCharacteristics();
+  log("Lämmitin: ominaisuudet", chars.map(c => c.uuid.slice(4, 8) + "[" +
+    ["read", "write", "writeWithoutResponse", "notify", "indicate"].filter(p => c.properties[p]).join(",") + "]").join(" "));
+  for (const c of chars){
+    if (!(c.properties.notify || c.properties.indicate)) continue;
+    c.addEventListener("characteristicvaluechanged", heatNotify);
+    await c.startNotifications();
+    heat.notifyChars.push(c);
+  }
 }
 async function heatSetup(){
   heatState("wait", "Yhdistetään…");
   const gatt = await heat.dev.gatt.connect();
   const svc = await gatt.getPrimaryService(UUID(0xffe0));
+  heat.svc = svc;
   heat.ch = await svc.getCharacteristic(UUID(0xffe1));
-  heat.ch.removeEventListener("characteristicvaluechanged", heatNotify);
-  heat.ch.addEventListener("characteristicvaluechanged", heatNotify);
-  await heat.ch.startNotifications();
+  heat.rxCount = 0; heat.lastRx = 0; heat.connectedAt = Date.now(); heat.resubAt = Date.now();
+  await heatSubscribe(svc);
   heatButtons(true);
-  heatState("on", "Yhdistetty: " + (heat.dev.name || "lämmitin"));
+  heatState("wait", "Yhdistetty: " + (heat.dev.name || "lämmitin") + " – odotetaan vastausta…");
+  await sleep(1000);
   heatPoll();
 }
 async function heatPoll(){
   clearTimeout(heat.timer);
   if (!heat.dev?.gatt.connected){ heatButtons(false); return; }
-  try { await heatSend(1, 0); } catch (e){ log("Lämmitin:", e.message); }
+  try { await heatSend(1, 0); } catch (e){ log("Lämmitin: kirjoitus epäonnistui –", errText(e)); }
+  // ei vastausta? tilataan ilmoitukset uudelleen (esim. pariliitoksen jälkeen)
+  if (Date.now() - heat.lastRx > 9000 && Date.now() - heat.resubAt > 9000 && heat.svc){
+    heat.resubAt = Date.now();
+    log("Lämmitin: ei vastausta – tilataan ilmoitukset uudelleen");
+    try { await heatSubscribe(heat.svc); } catch (e){ log("Lämmitin: uudelleentilaus epäonnistui –", errText(e)); }
+    if (!heat.lastRx) heatState("wait", "Yhdistetty, mutta lämmitin ei vastaa. Tarkista PIN (Asetukset) ja että AirHeaterBLE on suljettu.");
+  }
   heat.timer = setTimeout(heatPoll, 3000);
 }
 $("heatBtn").onclick = async () => {
