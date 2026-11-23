@@ -64,11 +64,23 @@ pre{font-size:11px;white-space:pre-wrap;word-break:break-all;background:var(--bg
 </head>
 <body>
 <header>
-  <h1>Vaunun kojelauta</h1>
+  <h1>Vaunun kojelauta <small class="muted" style="font-size:12px;font-weight:400">v4</small></h1>
   <span id="clock" class="muted"></span>
 </header>
 
+<div id="jserr" class="warnbox" style="display:block">Ladataan… (jos tämä teksti ei katoa, sivun koodi ei käynnistynyt tässä selaimessa)</div>
+<script>
+// Vanhalla syntaksilla: näyttää virheet myös, jos pääkoodi ei toimi tässä selaimessa
+window.onerror = function (msg, src, line, col) {
+  var b = document.getElementById("jserr");
+  b.style.display = "block";
+  b.innerHTML = "<b>Sivun koodi kaatui:</b> " + msg + " (rivi " + line + ":" + col + ")<br>" +
+    "Selain: " + navigator.userAgent + "<br>Bluetooth: " + (navigator.bluetooth ? "on" : "ei");
+};
+</script>
+
 <div id="nobt" class="warnbox"></div>
+<p id="supportTop" class="muted" style="font-size:11px;margin:-4px 0 10px"></p>
 
 <div class="grid">
   <!-- AKKU -->
@@ -186,7 +198,7 @@ const store = {
 };
 setInterval(() => { $("clock").textContent = new Date().toTimeString().slice(0, 5); }, 1000);
 
-const bt = navigator.bluetooth;
+let bt = navigator.bluetooth; // Bluefy voi lisätä tämän vasta sivun latauduttua
 const UUID = n => "0000" + n.toString(16).padStart(4, "0") + "-0000-1000-8000-00805f9b34fb";
 async function writeChar(ch, data){
   if (ch.writeValueWithResponse && ch.properties.write) return ch.writeValueWithResponse(data);
@@ -253,8 +265,11 @@ $("copyLog").onclick = () => navigator.clipboard?.writeText(logLines.join("\n"))
 $("clearLog").onclick = () => { logLines.length = 0; $("log").textContent = ""; };
 
 // ---------- tuen tarkistus ----------
-(function(){
-  const s = ["Versio 3"];
+$("jserr").style.display = "none";
+async function checkSupport(){
+  for (let i = 0; i < 10 && !navigator.bluetooth; i++) await sleep(300);
+  bt = navigator.bluetooth;
+  const s = ["Versio 4"];
   s.push("Web Bluetooth: " + (bt ? "kyllä" : "EI"));
   if (bt){
     s.push("requestLEScan: " + (typeof bt.requestLEScan === "function" ? "kyllä" : "ei"));
@@ -269,7 +284,9 @@ $("clearLog").onclick = () => { logLines.length = 0; $("log").textContent = ""; 
     $("nobt").innerHTML = "Tämä selain ei tue Bluetoothia. iPhonella avaa sivu <b>Bluefy</b>-selaimessa (App Store, ilmainen). Sivun pitää olla https-osoitteessa.";
     for (const b of ["bmsBtn", "vicBtn", "heatBtn"]) $(b).disabled = true;
   }
-})();
+  $("supportTop").textContent = s.join(" · ");
+}
+checkSupport();
 
 // =====================================================================
 // AKKU – WattCycle / TDT BMS (protokolla: patman15/aiobmsble tdt_bms.py)
