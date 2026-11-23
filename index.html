@@ -64,7 +64,7 @@ pre{font-size:11px;white-space:pre-wrap;word-break:break-all;background:var(--bg
 </head>
 <body>
 <header>
-  <h1>Vaunun kojelauta <small class="muted" style="font-size:12px;font-weight:400">v9</small></h1>
+  <h1>Vaunun kojelauta <small class="muted" style="font-size:12px;font-weight:400">v10</small></h1>
   <span id="clock" class="muted"></span>
 </header>
 
@@ -163,22 +163,30 @@ window.onerror = function (msg, src, line, col, err) {
       <h2><span class="dot" id="frDot"></span>Kylmälaukku</h2>
       <button id="frBtn">Yhdistä</button>
     </div>
-    <div class="big"><span id="frCur">–</span><small>°C sisällä</small></div>
+    <div class="row" style="margin-top:0">
+      <div class="kv" style="min-width:130px"><div class="big"><span id="frCur">–</span><small>°C</small></div><span id="frLbl1">Lämpötila</span></div>
+      <div class="kv" id="frRightBig" style="display:none;min-width:130px"><div class="big"><span id="frCur2">–</span><small>°C</small></div><span>Oikea lokero</span></div>
+    </div>
     <div class="row">
-      <div class="kv"><b id="frSet">–</b><span>Tavoite °C</span></div>
+      <div class="kv"><b id="frSet">–</b><span id="frSetLbl1">Tavoite °C</span></div>
+      <div class="kv" id="frRightSet" style="display:none"><b id="frSet2">–</b><span>Oikea tavoite °C</span></div>
       <div class="kv"><b id="frMode">–</b><span>Tila</span></div>
       <div class="kv"><b id="frV">–</b><span>Jännite V</span></div>
       <div class="kv"><b id="frProt">–</b><span>Akkusuoja</span></div>
     </div>
-    <div class="row" id="frRight" style="display:none">
-      <div class="kv"><b id="frCur2">–</b><span>Oikea °C</span></div>
-      <div class="kv"><b id="frSet2">–</b><span>Oikea tavoite</span></div>
-    </div>
     <div class="ctl">
       <button id="frPower" disabled>Päälle/pois</button>
+      <button id="frEco" class="ghost" disabled>Eco/Max</button>
+    </div>
+    <div class="ctl">
+      <span class="muted" id="frCtlLbl1" style="font-size:13px;min-width:90px">Tavoite</span>
       <button id="frDown" class="ghost" disabled>−</button>
       <button id="frUp" class="ghost" disabled>+</button>
-      <button id="frEco" class="ghost" disabled>Eco/Max</button>
+    </div>
+    <div class="ctl" id="frRightCtl" style="display:none">
+      <span class="muted" style="font-size:13px;min-width:90px">Oikea lokero</span>
+      <button id="frDown2" class="ghost" disabled>−</button>
+      <button id="frUp2" class="ghost" disabled>+</button>
     </div>
     <div class="status" id="frStatus">Ei yhdistetty</div>
   </section>
@@ -317,7 +325,7 @@ if ($("jserr").textContent.startsWith("Ladataan")){ $("jserr").innerHTML = "Sivu
 async function checkSupport(){
   for (let i = 0; i < 10 && !navigator.bluetooth; i++) await sleep(300);
   bt = navigator.bluetooth;
-  const s = ["Versio 9"];
+  const s = ["Versio 10"];
   s.push("Web Bluetooth: " + (bt ? "kyllä" : "EI"));
   if (bt){
     s.push("requestLEScan: " + (typeof bt.requestLEScan === "function" ? "kyllä" : "ei"));
@@ -534,7 +542,15 @@ function parseAc(p){
   return { state, err, v, a, t, ac };
 }
 const vicSeen = { mppt: 0, ac: 0 };
+let advCount = 0;
 async function onAdvert(ev){
+  if (advCount++ < 5){
+    let keys = "–";
+    try { keys = ev.manufacturerData ? Array.from(ev.manufacturerData.keys()).map(k => "0x" + k.toString(16)).join(",") : "ei valmistajadataa"; } catch (e){ keys = "virhe " + errText(e); }
+    const m0 = ev.manufacturerData?.get?.(0x02E1);
+    log("Victron: lähetys", ev.device?.name || ev.name || "?", "rssi", ev.rssi ?? "?", "valmistajat", keys,
+      m0 ? "data " + hex(new Uint8Array(m0.buffer.slice(m0.byteOffset, m0.byteOffset + m0.byteLength))) : "");
+  }
   const md = ev.manufacturerData?.get?.(0x02E1);
   if (!md) return;
   const d = new Uint8Array(md.buffer.slice(md.byteOffset, md.byteOffset + md.byteLength));
@@ -596,6 +612,8 @@ $("vicBtn").onclick = async () => {
     dev.addEventListener("advertisementreceived", onAdvert);
     await dev.watchAdvertisements();
     log("Victron: kuunnellaan laitetta", dev.name);
+    $("mpptStatus").textContent = "Kuunnellaan " + (dev.name || "laitetta") + "…";
+    setTimeout(() => { if (!advCount) log("Victron: 20 s ilman yhtään lähetystä – selain ei ehkä välitä mainoksia"); }, 20000);
     $("vicBtn").textContent = "Lisää toinen Victron";
   } catch (e){ log("Victron:", e.message); $("mpptStatus").textContent = "Virhe: " + e.message; dot("mpptDot", "err"); }
 };
@@ -769,9 +787,23 @@ function frDecode(p){
     rightTCHot: s8(p[22]), rightTCMid: s8(p[23]), rightTCCold: s8(p[24]), rightTCHalt: s8(p[25]),
     rightCurrent: s8(p[26]),
   });
+  st.raw = Array.from(p);
   return st;
 }
+// SET-komento: kaiutetaan laukun omat tavut muuttumattomina ja vaihdetaan vain muutetut kentät
 function frBuildSet(st){
+  if (st.raw && st.raw.length >= 14){
+    const left = st.raw.slice(0, 14);
+    left[0] = st.locked ? 1 : 0; left[1] = st.powered ? 1 : 0; left[2] = st.runMode; left[3] = st.batSaver;
+    left[4] = u8(st.leftTarget);
+    let right = [];
+    if (st.raw.length >= 29 && st.rightCurrent !== undefined && st.rightCurrent !== -128){
+      right = st.raw.slice(18, 29);
+      right[0] = u8(st.rightTarget);
+      right[8] = 0; right[9] = 0; right[10] = 0; // näissä kohdissa SET-komento on aina nollia (mittausarvoja ei kaiuteta)
+    }
+    return frFrame(0x02, [...left, ...right]);
+  }
   const left = [st.locked ? 1 : 0, st.powered ? 1 : 0, st.runMode, st.batSaver,
     u8(st.leftTarget), u8(st.tempMax), u8(st.tempMin), u8(st.leftRetDiff), st.startDelay, st.unit,
     u8(st.leftTCHot), u8(st.leftTCMid), u8(st.leftTCCold), u8(st.leftTCHalt)];
@@ -782,7 +814,7 @@ function frBuildSet(st){
 }
 const fr = { dev: null, ctl: null, tx: null, rx: null, buf: [], last: null, timer: null, rxCount: 0, lastRx: 0 };
 function frState(s, txt){ dot("frDot", s); if (txt) $("frStatus").textContent = txt; }
-function frButtons(on){ for (const b of ["frPower", "frDown", "frUp", "frEco"]) $(b).disabled = !on; }
+function frButtons(on){ for (const b of ["frPower", "frDown", "frUp", "frEco", "frDown2", "frUp2"]) $(b).disabled = !on; }
 function frShow(st){
   const u = st.unit === 1 ? "°F" : "°C";
   fr.last = st; fr.lastRx = Date.now();
@@ -792,7 +824,10 @@ function frShow(st){
   $("frV").textContent = fmt(st.batVoltage, 1);
   $("frProt").textContent = ["Matala", "Keski", "Korkea"][st.batSaver] ?? st.batSaver;
   const dual = st.rightCurrent !== undefined && st.rightCurrent !== -128;
-  $("frRight").style.display = dual ? "" : "none";
+  for (const id of ["frRightBig", "frRightSet", "frRightCtl"]) $(id).style.display = dual ? "" : "none";
+  $("frLbl1").textContent = dual ? "Vasen lokero" : "Lämpötila";
+  $("frSetLbl1").textContent = dual ? "Vasen tavoite °C" : "Tavoite °C";
+  $("frCtlLbl1").textContent = dual ? "Vasen lokero" : "Tavoite";
   if (dual){ $("frCur2").textContent = st.rightCurrent; $("frSet2").textContent = st.rightTarget; }
   frState(st.powered ? "on" : "wait", (st.powered ? "Päällä" : "Pois päältä") + (st.locked ? " · lukittu" : "") +
     (u === "°F" ? " · yksikkö °F" : "") + " · " + new Date().toTimeString().slice(0, 8));
@@ -875,6 +910,16 @@ $("frPower").onclick = () => frChange(st => { st.powered = !st.powered; });
 $("frEco").onclick = () => frChange(st => { st.runMode = st.runMode === 1 ? 0 : 1; });
 $("frUp").onclick = () => frAdjust(1);
 $("frDown").onclick = () => frAdjust(-1);
+function frAdjustRight(delta){
+  const st = fr.last; if (!st || st.rightTarget === undefined) return;
+  // oikean lokeron rajat laukun omista tavuista (max p[19], min p[20]); varalla pakastimen tyypilliset rajat
+  const hi = st.raw && st.raw.length > 20 ? s8(st.raw[19]) : -12, lo = st.raw && st.raw.length > 20 ? s8(st.raw[20]) : -20;
+  const t = Math.max(Math.min(lo, hi), Math.min(Math.max(lo, hi), st.rightTarget + delta));
+  frWrite(frFrame(0x06, [u8(t)])).then(() => setTimeout(() => frWrite(frFrame(0x01)).catch(() => {}), 400))
+    .catch(e => log("Kylmälaukku:", errText(e)));
+}
+$("frUp2").onclick = () => frAdjustRight(1);
+$("frDown2").onclick = () => frAdjustRight(-1);
 
 // offline-välimuisti (jos selain tukee)
 if ("serviceWorker" in navigator && window.isSecureContext) navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then(r => r.update()).catch(() => {});
