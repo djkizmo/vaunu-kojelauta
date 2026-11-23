@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0f1419">
+<meta http-equiv="Cache-Control" content="no-cache">
 <title>Vaunun kojelauta</title>
 <style>
 :root{
@@ -253,7 +254,7 @@ $("clearLog").onclick = () => { logLines.length = 0; $("log").textContent = ""; 
 
 // ---------- tuen tarkistus ----------
 (function(){
-  const s = ["Versio 2"];
+  const s = ["Versio 3"];
   s.push("Web Bluetooth: " + (bt ? "kyllä" : "EI"));
   if (bt){
     s.push("requestLEScan: " + (typeof bt.requestLEScan === "function" ? "kyllä" : "ei"));
@@ -642,7 +643,7 @@ $("heatDown").onclick = () => heatAdjust(-1);
 $("heatMode").onclick = () => { const r = heat.last; heatSend(2, r && r.mode === 2 ? 1 : 2).catch(e => log(e.message)); };
 
 // offline-välimuisti (jos selain tukee)
-if ("serviceWorker" in navigator && window.isSecureContext) navigator.serviceWorker.register("sw.js").catch(() => {});
+if ("serviceWorker" in navigator && window.isSecureContext) navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then(r => r.update()).catch(() => {});
 
 // testikäyttöön
 window.__test = { tdtCmd, crcModbus, parseTdt, parseSolar, parseAc, parseHeater, heaterCmd, victronDecrypt, xor48, store, getVictronKeys, resetKeys: () => { victronKeys = null; }, onAdvert };
