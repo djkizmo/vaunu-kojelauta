@@ -64,7 +64,7 @@ pre{font-size:11px;white-space:pre-wrap;word-break:break-all;background:var(--bg
 </head>
 <body>
 <header>
-  <h1>Vaunun kojelauta <small class="muted" style="font-size:12px;font-weight:400">v13</small></h1>
+  <h1>Vaunun kojelauta <small class="muted" style="font-size:12px;font-weight:400">v14</small></h1>
   <span id="clock" class="muted"></span>
 </header>
 
@@ -332,7 +332,7 @@ if ($("jserr").textContent.startsWith("Ladataan")){ $("jserr").innerHTML = "Sivu
 async function checkSupport(){
   for (let i = 0; i < 10 && !navigator.bluetooth; i++) await sleep(300);
   bt = navigator.bluetooth;
-  const s = ["Versio 13"];
+  const s = ["Versio 14"];
   s.push("Web Bluetooth: " + (bt ? "kyllä" : "EI"));
   if (bt){
     s.push("requestLEScan: " + (typeof bt.requestLEScan === "function" ? "kyllä" : "ei"));
@@ -1063,13 +1063,18 @@ async function connectAll(byUser){
     const nm = x => (x || "").trim();
     const find = s => s && (devs.find(d => d.id === s.id) || (nm(s.name) ? devs.find(d => nm(d.name) === nm(s.name)) : null));
     const jobs = [];
-    const roles = [["bms", bms, bmsUse, bmsState, "akku"], ["heat", heat, heatUse, heatState, "lämmitin"], ["fr", fr, frUse, frState, "kylmälaukku"]];
-    const missing = [];
-    for (const [role, obj, use, setState, label] of roles){
+    const roles = [
+      ["bms", bms, bmsUse, "akku", () => pickOptions([{ namePrefix: "WT" }, { namePrefix: "HS" }, { services: [UUID(0xfff0)] }], [UUID(0xfff0)])],
+      ["heat", heat, heatUse, "lämmitin", () => pickOptions(null, [UUID(0xffe0)])],
+      ["fr", fr, frUse, "kylmälaukku", () => pickOptions([{ namePrefix: "A1-" }, { services: [UUID(0x1234)] }], [UUID(0x1234)])]];
+    const missing = [], retry = [];
+    for (const r of roles){
+      const [role, obj, use, label] = r;
       const s = recalled(role); if (!s) continue;
       if (obj.dev && obj.dev.gatt && obj.dev.gatt.connected) continue;
       const d = find(s);
-      if (d) jobs.push(autoUse(d, use, setState, label)); else missing.push(label);
+      if (d) jobs.push(use(d).then(ok => { if (!ok) retry.push(r); return null; }));
+      else retry.push(r);
     }
     const vic = recalledVic();
     if (vic.length){
@@ -1081,10 +1086,28 @@ async function connectAll(byUser){
       }
     }
     const failed = (await Promise.all(jobs)).filter(Boolean);
-    const bad = missing.concat(failed);
+    // Bluefy ei yhdistä muistettuihin GATT-laitteisiin → napin painalluksella avataan listat yksi kerrallaan
+    if (byUser && retry.length){
+      for (const [role, , use, label, opts] of retry){
+        const s = recalled(role);
+        $("autoStatus").innerHTML = "Valitse listalta: <b>" + label.toUpperCase() + "</b>" + (s && s.name ? " (" + s.name.trim() + ")" : "");
+        let dev;
+        try { dev = await pickDevice(opts(), label); }
+        catch (e){ log(label + ": valinta ohitettiin –", errText(e)); failed.push(label); continue; }
+        remember(role, dev);
+        if (!(await use(dev))) failed.push(label);
+      }
+      retry.length = 0;
+    }
+    const bad = missing.concat(failed, retry.map(r => r[3]));
     $("autoStatus").textContent = bad.length
-      ? "Ei yhdistetty: " + bad.join(", ") + (missing.length ? ". Valitse puuttuvat kerran korteilta (ja salli taustayhteydet)." : "")
-      : "Kaikki muistetut laitteet yhdistetty.";
+      ? (retry.length ? "Victron yhdistyy itsestään. Paina Yhdistä kaikki ja valitse listoilta: " + retry.map(r => r[3]).join(", ") + "."
+                      : "Ei yhdistetty: " + bad.join(", ") + ".")
+      : "Kaikki laitteet yhdistetty.";
+    if (retry.length) for (const [, , , label] of retry){
+      const st = { "akku": bmsState, "lämmitin": heatState, "kylmälaukku": frState }[label];
+      st && st("", "Paina yläreunasta Yhdistä kaikki");
+    }
   } catch (e){
     log("Automaattinen:", errText(e));
     $("autoStatus").textContent = "Automaattinen yhdistäminen epäonnistui: " + errText(e);
