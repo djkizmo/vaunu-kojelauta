@@ -198,6 +198,29 @@ function pickOptions(filters, services, mfr){
   if ($("showAll").checked || !filters) o.acceptAllDevices = true; else o.filters = filters;
   return o;
 }
+// Laitehaku: jos selain hylkää asetukset, kokeillaan yksinkertaisemmin
+async function pickDevice(opts, label){
+  const tries = [opts];
+  const svc = opts.optionalServices || [];
+  tries.push({ acceptAllDevices: true, optionalServices: svc });
+  if (svc.length) tries.push({ filters: [{ services: svc }], optionalServices: svc });
+  let last;
+  for (const o of tries){
+    try {
+      log(label + ": laitehaku", JSON.stringify(o));
+      return await bt.requestDevice(o);
+    } catch (e){
+      last = e;
+      log(label + ": laitehaku epäonnistui –", e.name + ":", e.message);
+      // käyttäjä perui tai laitetta ei löytynyt listasta → ei yritetä muilla asetuksilla
+      if (e.name === "NotFoundError" && /cancel|peru/i.test(e.message)) break;
+      if (e.name === "SecurityError") break;
+    }
+  }
+  throw last;
+}
+function errText(e){ return (e && (e.name ? e.name + ": " : "") + (e.message || e)) || "tuntematon virhe"; }
+
 // pitää yhteyden: yrittää uudelleen katkoksen jälkeen
 function keepConnected(device, setup, setState){
   let stopped = false;
@@ -230,7 +253,7 @@ $("clearLog").onclick = () => { logLines.length = 0; $("log").textContent = ""; 
 
 // ---------- tuen tarkistus ----------
 (function(){
-  const s = [];
+  const s = ["Versio 2"];
   s.push("Web Bluetooth: " + (bt ? "kyllä" : "EI"));
   if (bt){
     s.push("requestLEScan: " + (typeof bt.requestLEScan === "function" ? "kyllä" : "ei"));
@@ -376,12 +399,12 @@ async function bmsPoll(){
 }
 $("bmsBtn").onclick = async () => {
   try {
-    bms.dev = await bt.requestDevice(pickOptions(
-      [{ namePrefix: "WT" }, { namePrefix: "HS" }, { services: [UUID(0xfff0)] }], [UUID(0xfff0)]));
+    bms.dev = await pickDevice(pickOptions(
+      [{ namePrefix: "WT" }, { namePrefix: "HS" }, { services: [UUID(0xfff0)] }], [UUID(0xfff0)]), "BMS");
     log("BMS: valittu", bms.dev.name, bms.dev.id);
     keepConnected(bms.dev, bmsSetup, bmsState);
     await bmsSetup();
-  } catch (e){ log("BMS:", e.message); bmsState("err", "Virhe: " + e.message); }
+  } catch (e){ log("BMS:", errText(e)); bmsState("err", "Virhe: " + errText(e)); }
 };
 
 // =====================================================================
@@ -601,11 +624,11 @@ async function heatPoll(){
 }
 $("heatBtn").onclick = async () => {
   try {
-    heat.dev = await bt.requestDevice(pickOptions(null, [UUID(0xffe0)]));
+    heat.dev = await pickDevice(pickOptions(null, [UUID(0xffe0)]), "Lämmitin");
     log("Lämmitin: valittu", heat.dev.name, heat.dev.id);
     keepConnected(heat.dev, heatSetup, heatState);
     await heatSetup();
-  } catch (e){ log("Lämmitin:", e.message); heatState("err", "Virhe: " + e.message); }
+  } catch (e){ log("Lämmitin:", errText(e)); heatState("err", "Virhe: " + errText(e)); }
 };
 $("heatOn").onclick = () => heatSend(3, 1).catch(e => log(e.message));
 $("heatOff").onclick = () => heatSend(3, 0).catch(e => log(e.message));
