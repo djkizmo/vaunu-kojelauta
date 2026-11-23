@@ -1,0 +1,628 @@
+<!doctype html>
+<html lang="fi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1419">
+<title>Vaunun kojelauta</title>
+<style>
+:root{
+  --bg:#f3f5f7;--card:#ffffff;--text:#11181f;--muted:#5b6672;--line:#dde2e7;
+  --accent:#0a7cff;--ok:#178a4c;--warn:#b86e00;--bad:#c62828;--chip:#eef1f4;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0f1419;--card:#1a2129;--text:#e8edf2;--muted:#93a0ad;--line:#2a333d;
+    --accent:#4ea1ff;--ok:#3ccf7e;--warn:#f0a43a;--bad:#ff6b6b;--chip:#232c36;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0f1419;--card:#1a2129;--text:#e8edf2;--muted:#93a0ad;--line:#2a333d;
+  --accent:#4ea1ff;--ok:#3ccf7e;--warn:#f0a43a;--bad:#ff6b6b;--chip:#232c36;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+  font:16px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  padding:calc(env(safe-area-inset-top) + 12px) 16px calc(env(safe-area-inset-bottom) + 24px)}
+header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+h1{font-size:20px;margin:0}
+.grid{display:grid;gap:12px;grid-template-columns:1fr}
+@media (min-width:720px){.grid{grid-template-columns:1fr 1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px}
+.card h2{font-size:15px;margin:0;display:flex;align-items:center;gap:8px}
+.top{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--muted);flex:none}
+.dot.on{background:var(--ok)}.dot.wait{background:var(--warn)}.dot.err{background:var(--bad)}
+.big{font-size:34px;font-weight:650;letter-spacing:-.5px}
+.big small{font-size:16px;color:var(--muted);font-weight:500;margin-left:2px}
+.row{display:flex;gap:14px;flex-wrap:wrap;margin-top:6px}
+.kv{min-width:84px}
+.kv b{display:block;font-size:18px;font-weight:600}
+.kv span{font-size:12px;color:var(--muted)}
+.status{font-size:13px;color:var(--muted);margin-top:8px}
+button{font:inherit;font-size:14px;border:0;border-radius:10px;padding:8px 12px;
+  background:var(--accent);color:#fff;cursor:pointer}
+button.ghost{background:var(--chip);color:var(--text)}
+button:disabled{opacity:.45}
+.ctl{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center}
+.bar{height:8px;border-radius:4px;background:var(--chip);overflow:hidden;margin-top:6px}
+.bar i{display:block;height:100%;background:var(--ok);width:0}
+.cells{display:flex;gap:4px;flex-wrap:wrap;margin-top:8px}
+.cells span{font-size:12px;background:var(--chip);border-radius:6px;padding:2px 6px}
+details{margin-top:12px}
+summary{cursor:pointer;color:var(--muted);font-size:14px}
+label{display:block;font-size:13px;color:var(--muted);margin-top:10px}
+input[type=text],input[type=number]{width:100%;font:inherit;font-size:15px;padding:8px 10px;margin-top:4px;
+  border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text)}
+.check{display:flex;gap:8px;align-items:center;color:var(--text);font-size:14px}
+pre{font-size:11px;white-space:pre-wrap;word-break:break-all;background:var(--bg);border:1px solid var(--line);
+  border-radius:8px;padding:8px;max-height:260px;overflow:auto}
+.warnbox{background:var(--chip);border-radius:10px;padding:10px;font-size:13px;margin-bottom:12px;display:none}
+.muted{color:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Vaunun kojelauta</h1>
+  <span id="clock" class="muted"></span>
+</header>
+
+<div id="nobt" class="warnbox"></div>
+
+<div class="grid">
+  <!-- AKKU -->
+  <section class="card" id="bms">
+    <div class="top">
+      <h2><span class="dot" id="bmsDot"></span>Akku (WattCycle)</h2>
+      <button id="bmsBtn">Yhdistä</button>
+    </div>
+    <div class="big"><span id="bmsSoc">–</span><small>%</small></div>
+    <div class="bar"><i id="bmsBar"></i></div>
+    <div class="row">
+      <div class="kv"><b id="bmsV">–</b><span>Jännite V</span></div>
+      <div class="kv"><b id="bmsA">–</b><span>Virta A</span></div>
+      <div class="kv"><b id="bmsW">–</b><span>Teho W</span></div>
+      <div class="kv"><b id="bmsAh">–</b><span>Jäljellä Ah</span></div>
+      <div class="kv"><b id="bmsT">–</b><span>Lämpö °C</span></div>
+      <div class="kv"><b id="bmsCyc">–</b><span>Syklit</span></div>
+    </div>
+    <div class="cells" id="bmsCells"></div>
+    <div class="status" id="bmsStatus">Ei yhdistetty</div>
+  </section>
+
+  <!-- AURINKO -->
+  <section class="card" id="mppt">
+    <div class="top">
+      <h2><span class="dot" id="mpptDot"></span>Aurinko (SmartSolar)</h2>
+      <button id="vicBtn">Kuuntele Victronia</button>
+    </div>
+    <div class="big"><span id="mpptPv">–</span><small>W</small></div>
+    <div class="row">
+      <div class="kv"><b id="mpptV">–</b><span>Akku V</span></div>
+      <div class="kv"><b id="mpptA">–</b><span>Latausvirta A</span></div>
+      <div class="kv"><b id="mpptY">–</b><span>Tänään kWh</span></div>
+      <div class="kv"><b id="mpptL">–</b><span>Kuorma A</span></div>
+    </div>
+    <div class="status" id="mpptStatus">Odottaa dataa</div>
+  </section>
+
+  <!-- LATURI -->
+  <section class="card" id="ac">
+    <div class="top">
+      <h2><span class="dot" id="acDot"></span>Verkkolaturi (Blue Smart)</h2>
+    </div>
+    <div class="big"><span id="acA">–</span><small>A</small></div>
+    <div class="row">
+      <div class="kv"><b id="acV">–</b><span>Akku V</span></div>
+      <div class="kv"><b id="acT">–</b><span>Lämpö °C</span></div>
+      <div class="kv"><b id="acAc">–</b><span>Verkkovirta A</span></div>
+    </div>
+    <div class="status" id="acStatus">Odottaa dataa</div>
+  </section>
+
+  <!-- LÄMMITIN -->
+  <section class="card" id="heat">
+    <div class="top">
+      <h2><span class="dot" id="heatDot"></span>Lämmitin (Vevor)</h2>
+      <button id="heatBtn">Yhdistä</button>
+    </div>
+    <div class="big"><span id="heatRoom">–</span><small>°C sisällä</small></div>
+    <div class="row">
+      <div class="kv"><b id="heatState">–</b><span>Tila</span></div>
+      <div class="kv"><b id="heatSet">–</b><span id="heatSetLbl">Asetus</span></div>
+      <div class="kv"><b id="heatV">–</b><span>Jännite V</span></div>
+      <div class="kv"><b id="heatCase">–</b><span>Kuori °C</span></div>
+    </div>
+    <div class="ctl">
+      <button id="heatOn" disabled>Käynnistä</button>
+      <button id="heatOff" class="ghost" disabled>Sammuta</button>
+      <button id="heatDown" class="ghost" disabled>−</button>
+      <button id="heatUp" class="ghost" disabled>+</button>
+      <button id="heatMode" class="ghost" disabled>Vaihda tila</button>
+    </div>
+    <div class="status" id="heatStatus">Ei yhdistetty</div>
+  </section>
+</div>
+
+<details class="card" style="margin-top:12px">
+  <summary>Asetukset</summary>
+  <label>SmartSolar MPPT – Instant readout -salausavain (32 merkkiä, VictronConnect → laite → ⚙ → Product info)
+    <input type="text" id="keyMppt" autocomplete="off" spellcheck="false" placeholder="esim. 0df4d0395b7d1a876c0c33ecb9e70dcd"></label>
+  <label>Blue Smart -laturi – Instant readout -salausavain
+    <input type="text" id="keyAc" autocomplete="off" spellcheck="false"></label>
+  <label>Lämmittimen PIN (oletus 1234)
+    <input type="number" id="heatPin" inputmode="numeric" value="1234"></label>
+  <label class="check"><input type="checkbox" id="showAll"> Näytä kaikki Bluetooth-laitteet valintalistassa</label>
+  <div class="ctl"><button id="saveBtn">Tallenna</button><span class="muted" id="saved"></span></div>
+  <p class="muted" style="font-size:12px">Avaimet tallennetaan vain tähän puhelimeen (selaimen muistiin), ei minnekään muualle.</p>
+</details>
+
+<details class="card" style="margin-top:12px">
+  <summary>Vianetsintä</summary>
+  <p class="muted" style="font-size:13px" id="support"></p>
+  <div class="ctl"><button class="ghost" id="copyLog">Kopioi loki</button><button class="ghost" id="clearLog">Tyhjennä</button></div>
+  <pre id="log"></pre>
+</details>
+
+<script>
+"use strict";
+// ---------- apu ----------
+const $ = id => document.getElementById(id);
+const hex = b => Array.from(b, x => x.toString(16).padStart(2, "0")).join(" ");
+const fmt = (v, d = 1) => (v === null || v === undefined || Number.isNaN(v)) ? "–" : v.toFixed(d);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const logLines = [];
+function log(...a){
+  const t = new Date().toTimeString().slice(0, 8);
+  logLines.push(t + " " + a.join(" "));
+  if (logLines.length > 400) logLines.shift();
+  $("log").textContent = logLines.slice(-150).join("\n");
+}
+function dot(id, s){ $(id).className = "dot" + (s ? " " + s : ""); }
+const store = {
+  get(k, d){ try { const v = localStorage.getItem("vaunu." + k); return v === null ? d : v; } catch { return d; } },
+  set(k, v){ try { localStorage.setItem("vaunu." + k, v); } catch {} }
+};
+setInterval(() => { $("clock").textContent = new Date().toTimeString().slice(0, 5); }, 1000);
+
+const bt = navigator.bluetooth;
+const UUID = n => "0000" + n.toString(16).padStart(4, "0") + "-0000-1000-8000-00805f9b34fb";
+async function writeChar(ch, data){
+  if (ch.writeValueWithResponse && ch.properties.write) return ch.writeValueWithResponse(data);
+  if (ch.writeValueWithoutResponse && ch.properties.writeWithoutResponse) return ch.writeValueWithoutResponse(data);
+  return ch.writeValue(data);
+}
+function pickOptions(filters, services, mfr){
+  const o = { optionalServices: services };
+  if (mfr) o.optionalManufacturerData = mfr;
+  if ($("showAll").checked || !filters) o.acceptAllDevices = true; else o.filters = filters;
+  return o;
+}
+// pitää yhteyden: yrittää uudelleen katkoksen jälkeen
+function keepConnected(device, setup, setState){
+  let stopped = false;
+  device.addEventListener("gattserverdisconnected", async () => {
+    if (stopped) return;
+    setState("wait", "Yhteys katkesi – yhdistetään uudelleen…");
+    for (let i = 0; i < 1000 && !stopped; i++){
+      await sleep(Math.min(3000 + i * 2000, 30000));
+      try { await setup(); return; } catch (e) { log(device.name, "uudelleenyhdistys epäonnistui:", e.message); }
+    }
+  });
+  return () => { stopped = true; };
+}
+
+// ---------- asetukset ----------
+$("keyMppt").value = store.get("keyMppt", "");
+$("keyAc").value = store.get("keyAc", "");
+$("heatPin").value = store.get("heatPin", "1234");
+$("showAll").checked = store.get("showAll", "0") === "1";
+$("saveBtn").onclick = () => {
+  for (const k of ["keyMppt", "keyAc"]) $(k).value = $(k).value.replace(/[^0-9a-f]/gi, "").toLowerCase();
+  store.set("keyMppt", $("keyMppt").value); store.set("keyAc", $("keyAc").value);
+  store.set("heatPin", $("heatPin").value); store.set("showAll", $("showAll").checked ? "1" : "0");
+  victronKeys = null;
+  $("saved").textContent = "Tallennettu";
+  setTimeout(() => $("saved").textContent = "", 2000);
+};
+$("copyLog").onclick = () => navigator.clipboard?.writeText(logLines.join("\n"));
+$("clearLog").onclick = () => { logLines.length = 0; $("log").textContent = ""; };
+
+// ---------- tuen tarkistus ----------
+(function(){
+  const s = [];
+  s.push("Web Bluetooth: " + (bt ? "kyllä" : "EI"));
+  if (bt){
+    s.push("requestLEScan: " + (typeof bt.requestLEScan === "function" ? "kyllä" : "ei"));
+    s.push("bluetooth.watchAdvertisements: " + (typeof bt.watchAdvertisements === "function" ? "kyllä" : "ei"));
+    s.push("device.watchAdvertisements: " + (typeof BluetoothDevice !== "undefined" && BluetoothDevice.prototype && "watchAdvertisements" in BluetoothDevice.prototype ? "kyllä" : "ei/tuntematon"));
+  }
+  s.push("HTTPS: " + (window.isSecureContext ? "kyllä" : "EI"));
+  $("support").textContent = s.join(" · ");
+  log("Tuki:", s.join(", "));
+  if (!bt){
+    $("nobt").style.display = "block";
+    $("nobt").innerHTML = "Tämä selain ei tue Bluetoothia. iPhonella avaa sivu <b>Bluefy</b>-selaimessa (App Store, ilmainen). Sivun pitää olla https-osoitteessa.";
+    for (const b of ["bmsBtn", "vicBtn", "heatBtn"]) $(b).disabled = true;
+  }
+})();
+
+// =====================================================================
+// AKKU – WattCycle / TDT BMS (protokolla: patman15/aiobmsble tdt_bms.py)
+// =====================================================================
+function crcModbus(bytes){
+  let crc = 0xFFFF;
+  for (const b of bytes){ crc ^= b & 0xFF; for (let i = 0; i < 8; i++) crc = (crc & 1) ? ((crc >>> 1) ^ 0xA001) : (crc >>> 1); }
+  return crc & 0xFFFF;
+}
+function tdtCmd(cmd, head = 0x7E){
+  const f = [head, 0x00, 0x01, 0x03, 0x00, cmd, 0x00, 0x00];
+  const c = crcModbus(f); f.push((c >> 8) & 0xFF, c & 0xFF, 0x0D);
+  return Uint8Array.from(f);
+}
+const u16be = (m, i) => (m[i] << 8) | m[i + 1];
+function parseTdt(m, m8d, v1){
+  const n = m[8];
+  if (!n || m.length < 10 + 2 * n) throw new Error("lyhyt 8C-viesti");
+  const cells = [];
+  for (let i = 0; i < n; i++){ const v = u16be(m, 9 + 2 * i); if (v) cells.push(v / 1000); }
+  const t = m[9 + 2 * n];
+  const temps = [];
+  for (let j = 0; j < t; j++){ const v = u16be(m, 10 + 2 * n + 2 * j); if (v) temps.push((v - 2730) / 10); }
+  const S = 10 + 2 * n + 2 * t;
+  if (m.length < S + 16) throw new Error("lyhyt 8C-viesti (kentät)");
+  const cur = u16be(m, S), sign = (cur >> 15) ? -1 : 1;
+  const r = {
+    cells, temps,
+    voltage: u16be(m, S + 2) / 100,
+    current: v1 ? (cur & 0x3FFF) * sign : (cur & 0x3FFF) / 10 * sign,
+    charge: v1 ? u16be(m, S + 4) : u16be(m, S + 4) / 10,
+    cycles: u16be(m, S + 8),
+    capacity: v1 ? u16be(m, S + 10) : Math.floor(u16be(m, S + 10) / 10),
+    soc: u16be(m, S + 12),
+    health: u16be(m, S + 14),
+  };
+  const idx = n + t;
+  if (m8d && m8d.length > 16 + idx){
+    r.problem = u16be(m8d, 14 + idx);
+    r.chg = !!(m8d[16 + idx] & 2); r.dsg = !!(m8d[16 + idx] & 4);
+  }
+  return r;
+}
+
+const bms = { dev: null, rx: null, tx: null, buf: null, exp: 0, waiters: {}, msgs: {}, head: 0x7E, v1: false, timer: null };
+function bmsState(s, txt){ dot("bmsDot", s); if (txt) $("bmsStatus").textContent = txt; }
+function bmsNotify(e){
+  const d = new Uint8Array(e.target.value.buffer.slice(e.target.value.byteOffset, e.target.value.byteOffset + e.target.value.byteLength));
+  if (d[0] === 0x7E && d.length > 10 && (!bms.buf || bms.buf.length >= bms.exp)){
+    bms.buf = d; bms.exp = 10 + u16be(d, 6);
+  } else if (bms.buf){
+    const n = new Uint8Array(bms.buf.length + d.length); n.set(bms.buf); n.set(d, bms.buf.length); bms.buf = n;
+  } else { log("BMS: ylimääräinen data", hex(d)); return; }
+  const f = bms.buf;
+  if (f.length > 600){ bms.buf = null; return; }
+  if (f.length < Math.max(10, bms.exp) || f[f.length - 1] !== 0x0D) return;
+  bms.buf = null;
+  const cmd = f[5];
+  if (f[4] !== 0){ log("BMS: virhekoodi", f[4], "komennolle", cmd.toString(16)); return; }
+  const crc = (f[f.length - 3] << 8) | f[f.length - 2];
+  if (crcModbus(f.subarray(0, f.length - 3)) !== crc && cmd !== 0x8D){ log("BMS: CRC-virhe", hex(f)); return; }
+  const msg = f.slice(0, f.length - 3);
+  bms.msgs[cmd] = msg;
+  bms.waiters[cmd]?.(msg); delete bms.waiters[cmd];
+}
+function bmsRequest(cmd, timeout = 2500){
+  return new Promise(async (res, rej) => {
+    const tm = setTimeout(() => { delete bms.waiters[cmd]; rej(new Error("aikakatkaisu 0x" + cmd.toString(16))); }, timeout);
+    bms.waiters[cmd] = m => { clearTimeout(tm); res(m); };
+    try { await writeChar(bms.tx, tdtCmd(cmd, bms.head)); } catch (e) { clearTimeout(tm); delete bms.waiters[cmd]; rej(e); }
+  });
+}
+async function bmsAsk(cmd){
+  try { return await bmsRequest(cmd); }
+  catch (e){
+    bms.head = bms.head === 0x7E ? 0x1E : 0x7E; // kokeile toista otsikkotavua
+    log("BMS:", e.message, "– kokeillaan otsikkoa 0x" + bms.head.toString(16));
+    return await bmsRequest(cmd);
+  }
+}
+async function bmsSetup(){
+  bmsState("wait", "Yhdistetään…");
+  const gatt = await bms.dev.gatt.connect();
+  const svc = await gatt.getPrimaryService(UUID(0xfff0));
+  try {
+    const cfg = await svc.getCharacteristic(UUID(0xfffa));
+    await writeChar(cfg, new TextEncoder().encode("HiLink"));
+    const v = await cfg.readValue();
+    log("BMS: avaus fffa =", hex(new Uint8Array(v.buffer)));
+  } catch (e){ log("BMS: fffa ei käytössä (", e.message, ")"); }
+  bms.rx = await svc.getCharacteristic(UUID(0xfff1));
+  bms.tx = await svc.getCharacteristic(UUID(0xfff2));
+  bms.rx.removeEventListener("characteristicvaluechanged", bmsNotify);
+  bms.rx.addEventListener("characteristicvaluechanged", bmsNotify);
+  await bms.rx.startNotifications();
+  try {
+    const info = await bmsAsk(0x92);
+    const sw = new TextDecoder().decode(info.slice(8, 28)).replace(/\0.*$/s, "").trim();
+    bms.v1 = sw.slice(0, -1).endsWith("1.");
+    log("BMS: ohjelmisto", JSON.stringify(sw), bms.v1 ? "(v1)" : "(v2)");
+  } catch (e){ log("BMS: laitetietoja ei saatu:", e.message); }
+  bmsState("on", "Yhdistetty: " + (bms.dev.name || "akku"));
+  bmsPoll();
+}
+async function bmsPoll(){
+  clearTimeout(bms.timer);
+  if (!bms.dev?.gatt.connected) return;
+  try {
+    const m = await bmsAsk(0x8C);
+    let m8d = null; try { m8d = await bmsAsk(0x8D); } catch {}
+    const r = parseTdt(m, m8d, bms.v1);
+    $("bmsSoc").textContent = r.soc; $("bmsBar").style.width = Math.min(100, r.soc) + "%";
+    $("bmsBar").style.background = r.soc < 20 ? "var(--bad)" : r.soc < 40 ? "var(--warn)" : "var(--ok)";
+    $("bmsV").textContent = fmt(r.voltage, 2); $("bmsA").textContent = fmt(r.current, 1);
+    $("bmsW").textContent = fmt(r.voltage * r.current, 0); $("bmsAh").textContent = fmt(r.charge, 1);
+    $("bmsT").textContent = r.temps.length ? r.temps.map(x => x.toFixed(0)).join(" / ") : "–";
+    $("bmsCyc").textContent = r.cycles;
+    const mn = Math.min(...r.cells), mx = Math.max(...r.cells);
+    $("bmsCells").innerHTML = r.cells.map(v => `<span>${v.toFixed(3)}</span>`).join("") +
+      (r.cells.length ? `<span>Δ ${((mx - mn) * 1000).toFixed(0)} mV</span>` : "");
+    let txt = "Päivitetty " + new Date().toTimeString().slice(0, 8);
+    if (r.problem) txt += " · BMS-hälytyskoodi " + r.problem;
+    if (r.chg === false) txt += " · lataus estetty";
+    if (r.dsg === false) txt += " · purku estetty";
+    bmsState(r.problem ? "err" : "on", txt);
+  } catch (e){ log("BMS:", e.message); bmsState("wait", "Ei vastausta: " + e.message); }
+  bms.timer = setTimeout(bmsPoll, 4000);
+}
+$("bmsBtn").onclick = async () => {
+  try {
+    bms.dev = await bt.requestDevice(pickOptions(
+      [{ namePrefix: "WT" }, { namePrefix: "HS" }, { services: [UUID(0xfff0)] }], [UUID(0xfff0)]));
+    log("BMS: valittu", bms.dev.name, bms.dev.id);
+    keepConnected(bms.dev, bmsSetup, bmsState);
+    await bmsSetup();
+  } catch (e){ log("BMS:", e.message); bmsState("err", "Virhe: " + e.message); }
+};
+
+// =====================================================================
+// VICTRON – Instant readout -mainokset (AES-CTR), SmartSolar + Blue Smart
+// =====================================================================
+const VIC_STATE = {0:"Pois",1:"Virransäästö",2:"Vika",3:"Bulk",4:"Absorptio",5:"Float",6:"Varastointi",
+  7:"Tasaus",9:"Invertteri",11:"Virtalähde",245:"Käynnistyy",246:"Toistuva absorptio",247:"Toistuva absorptio",
+  248:"Huolto (recondition)",249:"Akkusuoja",252:"Ulkoinen ohjaus"};
+const VIC_ERR = {0:"",2:"Akun lämpö liian korkea",3:"Akkujännite liian korkea",17:"Laturin lämpö liian korkea",
+  18:"Ylivirta",20:"Bulk-aikaraja",33:"Paneelijännite liian korkea",34:"Paneelivirta liian suuri",38:"Tulo kytketty pois"};
+let victronKeys = null;
+async function getVictronKeys(){
+  if (victronKeys) return victronKeys;
+  victronKeys = [];
+  for (const [which, id] of [["mppt", "keyMppt"], ["ac", "keyAc"]]){
+    const h = store.get(id, "");
+    if (h.length !== 32) continue;
+    const raw = Uint8Array.from(h.match(/../g).map(x => parseInt(x, 16)));
+    const key = await crypto.subtle.importKey("raw", raw, "AES-CTR", false, ["decrypt"]);
+    victronKeys.push({ which, first: raw[0], key });
+  }
+  return victronKeys;
+}
+async function victronDecrypt(d){
+  // d = valmistajadata ilman yritystunnusta 0x02E1
+  if (d.length < 10 || d[0] !== 0x10) return null;
+  const record = d[4], nonce = d[5] | (d[6] << 8), check = d[7];
+  const keys = (await getVictronKeys()).filter(k => k.first === check);
+  if (!keys.length) return { record, nokey: true };
+  const ctr = new Uint8Array(16); ctr[0] = nonce & 0xFF; ctr[1] = nonce >> 8;
+  const plain = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-CTR", counter: ctr, length: 64 }, keys[0].key, d.slice(8)));
+  return { record, plain, which: keys[0].which };
+}
+function bitsLE(b){
+  let pos = 0;
+  return n => { let v = 0; for (let i = 0; i < n; i++, pos++){ if ((b[pos >> 3] >> (pos & 7)) & 1) v |= (1 << i); } return v >>> 0; };
+}
+function parseSolar(p){
+  const r = bitsLE(p);
+  const state = r(8), err = r(8);
+  let v = r(16); v = v === 0x7FFF ? null : (v << 16 >> 16) / 100;
+  let a = r(16); a = a === 0x7FFF ? null : (a << 16 >> 16) / 10;
+  let y = r(16); y = y === 0xFFFF ? null : y / 100;
+  let pv = r(16); pv = pv === 0xFFFF ? null : pv;
+  let load = p.length >= 12 ? r(9) : 0x1FF; load = load === 0x1FF ? null : load / 10;
+  return { state, err, v, a, y, pv, load };
+}
+function parseAc(p){
+  const r = bitsLE(p);
+  const state = r(8), err = r(8);
+  let v = r(13); v = v === 0x1FFF ? null : v / 100;
+  let a = r(11); a = a === 0x7FF ? null : a / 10;
+  r(13); r(11); r(13); r(11); // lähdöt 2 ja 3
+  let t = r(7); t = t === 0x7F ? null : t - 40;
+  let ac = r(9); ac = ac === 0x1FF ? null : ac / 10;
+  return { state, err, v, a, t, ac };
+}
+const vicSeen = { mppt: 0, ac: 0 };
+async function onAdvert(ev){
+  const md = ev.manufacturerData?.get?.(0x02E1);
+  if (!md) return;
+  const d = new Uint8Array(md.buffer.slice(md.byteOffset, md.byteOffset + md.byteLength));
+  let res;
+  try { res = await victronDecrypt(d); } catch (e){ log("Victron: purku epäonnistui", e.message); return; }
+  if (!res) return;
+  const name = ev.device?.name || ev.name || "?";
+  if (res.nokey){
+    const target = res.record === 0x08 ? "acStatus" : "mpptStatus";
+    $(target).textContent = `Laite "${name}" löytyi, mutta avain puuttuu tai on väärä (Asetukset).`;
+    dot(res.record === 0x08 ? "acDot" : "mpptDot", "wait");
+    return;
+  }
+  const time = new Date().toTimeString().slice(0, 8);
+  if (res.record === 0x01){
+    const s = parseSolar(res.plain); vicSeen.mppt = Date.now();
+    $("mpptPv").textContent = s.pv ?? "–"; $("mpptV").textContent = fmt(s.v, 2);
+    $("mpptA").textContent = fmt(s.a, 1); $("mpptY").textContent = fmt(s.y, 2); $("mpptL").textContent = fmt(s.load, 1);
+    const st = VIC_STATE[s.state] ?? ("tila " + s.state);
+    $("mpptStatus").textContent = st + (s.err ? " · " + (VIC_ERR[s.err] || "virhe #" + s.err) : "") + " · " + time;
+    dot("mpptDot", s.err ? "err" : "on");
+  } else if (res.record === 0x08){
+    const s = parseAc(res.plain); vicSeen.ac = Date.now();
+    $("acA").textContent = fmt(s.a, 1); $("acV").textContent = fmt(s.v, 2);
+    $("acT").textContent = s.t ?? "–"; $("acAc").textContent = fmt(s.ac, 1);
+    const st = VIC_STATE[s.state] ?? ("tila " + s.state);
+    $("acStatus").textContent = st + (s.err ? " · " + (VIC_ERR[s.err] || "virhe #" + s.err) : "") + " · " + time;
+    dot("acDot", s.err ? "err" : "on");
+  } else {
+    log("Victron: tuntematon tietuetyyppi", res.record, name);
+  }
+}
+setInterval(() => { // vanhentunut data harmaaksi
+  for (const [k, d] of [["mppt", "mpptDot"], ["ac", "acDot"]])
+    if (vicSeen[k] && Date.now() - vicSeen[k] > 60000) dot(d, "wait");
+}, 5000);
+$("vicBtn").onclick = async () => {
+  if (!(await getVictronKeys()).length){ $("mpptStatus").textContent = "Lisää ensin salausavaimet kohtaan Asetukset."; return; }
+  try {
+    if (typeof bt.requestLEScan === "function"){
+      await bt.requestLEScan({ filters: [{ manufacturerData: [{ companyIdentifier: 0x02E1 }] }], keepRepeatedDevices: true });
+      bt.addEventListener("advertisementreceived", onAdvert);
+      log("Victron: requestLEScan käynnissä");
+      $("mpptStatus").textContent = $("acStatus").textContent = "Kuunnellaan…";
+      return;
+    }
+    if (typeof bt.watchAdvertisements === "function"){ // Bluefyn oma laajennus
+      bt.addEventListener("advertisementreceived", onAdvert);
+      await bt.watchAdvertisements({});
+      log("Victron: bluetooth.watchAdvertisements käynnissä");
+      $("mpptStatus").textContent = $("acStatus").textContent = "Kuunnellaan…";
+      return;
+    }
+    // Varatapa: valitse laite ja kuuntele sen mainoksia (toista kummallekin laitteelle)
+    const dev = await bt.requestDevice(pickOptions(
+      [{ namePrefix: "SmartSolar" }, { namePrefix: "Blue Smart" }, { namePrefix: "BlueSmart" }, { namePrefix: "Smart" },
+       { manufacturerData: [{ companyIdentifier: 0x02E1 }] }], [], [0x02E1]));
+    if (typeof dev.watchAdvertisements !== "function") throw new Error("selain ei tue mainosten kuuntelua");
+    dev.addEventListener("advertisementreceived", onAdvert);
+    await dev.watchAdvertisements();
+    log("Victron: kuunnellaan laitetta", dev.name);
+    $("vicBtn").textContent = "Lisää toinen Victron";
+  } catch (e){ log("Victron:", e.message); $("mpptStatus").textContent = "Virhe: " + e.message; dot("mpptDot", "err"); }
+};
+
+// =====================================================================
+// LÄMMITIN – Vevor / AirHeaterBLE (AA55/AA66; bderleta/vevor-ble-bridge)
+// =====================================================================
+const HEAT_STEP = {0:"Valmiustila",1:"Itsetesti",2:"Sytytys",3:"Käy",4:"Jäähdytys",6:"Tuuletus"};
+const HEAT_ERR = ["","Käynnistys epäonnistui","Polttoaine loppu","Jännite liian korkea","Poistoanturin vika",
+  "Tuloanturin vika","Pumpun vika","Puhaltimen vika","Hehkutulpan vika","Ylikuumeneminen","Ylikuumenemisanturin vika"];
+const HEAT_ERR_ALT = ["","Jännite liian korkea","","Hehkutulpan vika","Pumpun vika","Ylikuumeneminen",
+  "Puhaltimen vika","","Polttoaine loppu","Ylikuumenemisanturin vika","Käynnistys epäonnistui"];
+const XKEY = [112, 97, 115, 115, 119, 111, 114, 100]; // "password"
+const xor48 = b => b.map((x, i) => x ^ XKEY[i % 8]);
+function heaterCmd(cmd, arg){
+  const pin = parseInt(store.get("heatPin", "1234"), 10) || 1234;
+  const p = [0xAA, 0x55, Math.floor(pin / 100) & 0xFF, pin % 100, cmd & 0xFF, arg & 0xFF, (arg >> 8) & 0xFF, 0];
+  p[7] = (p[2] + p[3] + p[4] + p[5] + p[6]) & 0xFF;
+  return Uint8Array.from(p);
+}
+const s16le = (b, i) => ((b[i] | (b[i + 1] << 8)) << 16) >> 16;
+const s16be = (b, i) => (((b[i] << 8) | b[i + 1]) << 16) >> 16;
+function parseHeater(b){
+  let enc = false;
+  if (b.length >= 48 && !(b[0] === 0xAA && (b[1] === 0x55 || b[1] === 0x66))){ b = xor48(b); enc = true; }
+  if (b[0] !== 0xAA || b.length < 17) return null;
+  const type = b[1] === 0x66 ? "AA66" : b[1] === 0x55 ? "AA55" : null;
+  if (!type) return null;
+  const r = { type, enc, on: b[3] === 1, step: b[5], mode: b[8] };
+  if (enc){
+    r.err = HEAT_ERR[b[35]] ?? ("#" + b[35]);
+    r.setTemp = b[9]; r.setLevel = b[10];
+    r.volt = ((b[11] << 8) | b[12]) / 10;
+    r.caseT = s16be(b, 13);
+    r.room = s16be(b, 32) / 10;
+  } else {
+    r.err = type === "AA66" ? (HEAT_ERR_ALT[b[17]] ?? ("#" + b[17])) : (HEAT_ERR[b[4]] ?? ("#" + b[4]));
+    if (r.mode === 2){ r.setTemp = b[9]; r.setLevel = b[10] + 1; }
+    else if (r.mode === 1){ r.setLevel = b[9]; }
+    else { r.setLevel = b[10] + 1; }
+    r.volt = (b[11] | (b[12] << 8)) / 10;
+    r.caseT = s16le(b, 13);
+    r.room = s16le(b, 15);
+  }
+  return r;
+}
+const heat = { dev: null, ch: null, buf: null, last: null, timer: null, busy: false };
+function heatState(s, txt){ dot("heatDot", s); if (txt) $("heatStatus").textContent = txt; }
+function heatButtons(on){ for (const b of ["heatOn", "heatOff", "heatDown", "heatUp", "heatMode"]) $(b).disabled = !on; }
+function heatNotify(e){
+  const v = e.target.value;
+  const d = new Uint8Array(v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength));
+  let frame = null;
+  if (d[0] === 0xAA && (d[1] === 0x55 || d[1] === 0x66) && d.length >= 17){ frame = d; heat.buf = null; }
+  else {
+    const x0 = d[0] ^ XKEY[0], x1 = d[1] ^ XKEY[1];
+    if (x0 === 0xAA && (x1 === 0x55 || x1 === 0x66)) heat.buf = d;
+    else if (heat.buf){ const n = new Uint8Array(heat.buf.length + d.length); n.set(heat.buf); n.set(d, heat.buf.length); heat.buf = n; }
+    else { log("Lämmitin: tuntematon", hex(d)); return; }
+    if (heat.buf.length >= 48){ frame = heat.buf.slice(0, 48); heat.buf = null; } else return;
+  }
+  const r = parseHeater(frame);
+  if (!r){ log("Lämmitin: ei tulkittu", hex(frame)); return; }
+  heat.last = r;
+  $("heatRoom").textContent = fmt(r.room, Number.isInteger(r.room) ? 0 : 1);
+  $("heatState").textContent = r.on ? (HEAT_STEP[r.step] || "Käy") : "Pois";
+  if (r.mode === 2){ $("heatSetLbl").textContent = "Tavoite °C"; $("heatSet").textContent = r.setTemp ?? "–"; }
+  else { $("heatSetLbl").textContent = "Teho (taso)"; $("heatSet").textContent = r.setLevel ?? "–"; }
+  $("heatV").textContent = fmt(r.volt, 1); $("heatCase").textContent = r.caseT;
+  heatState(r.err ? "err" : (r.on ? "on" : "on"),
+    (r.err ? "⚠ " + r.err + " · " : "") + (r.mode === 2 ? "Lämpötilatila" : "Tehotila") + " · " + r.type + (r.enc ? " (salattu)" : "") +
+    " · " + new Date().toTimeString().slice(0, 8));
+}
+async function heatSend(cmd, arg){
+  if (!heat.ch) return;
+  const f = heaterCmd(cmd, arg);
+  log("Lämmitin →", hex(f));
+  await writeChar(heat.ch, f);
+}
+async function heatSetup(){
+  heatState("wait", "Yhdistetään…");
+  const gatt = await heat.dev.gatt.connect();
+  const svc = await gatt.getPrimaryService(UUID(0xffe0));
+  heat.ch = await svc.getCharacteristic(UUID(0xffe1));
+  heat.ch.removeEventListener("characteristicvaluechanged", heatNotify);
+  heat.ch.addEventListener("characteristicvaluechanged", heatNotify);
+  await heat.ch.startNotifications();
+  heatButtons(true);
+  heatState("on", "Yhdistetty: " + (heat.dev.name || "lämmitin"));
+  heatPoll();
+}
+async function heatPoll(){
+  clearTimeout(heat.timer);
+  if (!heat.dev?.gatt.connected){ heatButtons(false); return; }
+  try { await heatSend(1, 0); } catch (e){ log("Lämmitin:", e.message); }
+  heat.timer = setTimeout(heatPoll, 3000);
+}
+$("heatBtn").onclick = async () => {
+  try {
+    heat.dev = await bt.requestDevice(pickOptions(null, [UUID(0xffe0)]));
+    log("Lämmitin: valittu", heat.dev.name, heat.dev.id);
+    keepConnected(heat.dev, heatSetup, heatState);
+    await heatSetup();
+  } catch (e){ log("Lämmitin:", e.message); heatState("err", "Virhe: " + e.message); }
+};
+$("heatOn").onclick = () => heatSend(3, 1).catch(e => log(e.message));
+$("heatOff").onclick = () => heatSend(3, 0).catch(e => log(e.message));
+function heatAdjust(delta){
+  const r = heat.last; if (!r) return;
+  if (r.mode === 2){ const t = Math.max(8, Math.min(36, (r.setTemp ?? 20) + delta)); heatSend(4, t).catch(e => log(e.message)); }
+  else { const l = Math.max(1, Math.min(10, (r.setLevel ?? 5) + delta)); heatSend(4, l).catch(e => log(e.message)); }
+}
+$("heatUp").onclick = () => heatAdjust(1);
+$("heatDown").onclick = () => heatAdjust(-1);
+$("heatMode").onclick = () => { const r = heat.last; heatSend(2, r && r.mode === 2 ? 1 : 2).catch(e => log(e.message)); };
+
+// offline-välimuisti (jos selain tukee)
+if ("serviceWorker" in navigator && window.isSecureContext) navigator.serviceWorker.register("sw.js").catch(() => {});
+
+// testikäyttöön
+window.__test = { tdtCmd, crcModbus, parseTdt, parseSolar, parseAc, parseHeater, heaterCmd, victronDecrypt, xor48, store, getVictronKeys, resetKeys: () => { victronKeys = null; }, onAdvert };
+</script>
+</body>
+</html>
