@@ -64,7 +64,7 @@ pre{font-size:11px;white-space:pre-wrap;word-break:break-all;background:var(--bg
 </head>
 <body>
 <header>
-  <h1>Vaunun kojelauta <small class="muted" style="font-size:12px;font-weight:400">v14</small></h1>
+  <h1>Vaunun kojelauta <small class="muted" style="font-size:12px;font-weight:400">v15</small></h1>
   <span id="clock" class="muted"></span>
 </header>
 
@@ -332,7 +332,7 @@ if ($("jserr").textContent.startsWith("Ladataan")){ $("jserr").innerHTML = "Sivu
 async function checkSupport(){
   for (let i = 0; i < 10 && !navigator.bluetooth; i++) await sleep(300);
   bt = navigator.bluetooth;
-  const s = ["Versio 14"];
+  const s = ["Versio 15"];
   s.push("Web Bluetooth: " + (bt ? "kyllä" : "EI"));
   if (bt){
     s.push("requestLEScan: " + (typeof bt.requestLEScan === "function" ? "kyllä" : "ei"));
@@ -1086,34 +1086,50 @@ async function connectAll(byUser){
       }
     }
     const failed = (await Promise.all(jobs)).filter(Boolean);
-    // Bluefy ei yhdistä muistettuihin GATT-laitteisiin → napin painalluksella avataan listat yksi kerrallaan
-    if (byUser && retry.length){
-      for (const [role, , use, label, opts] of retry){
-        const s = recalled(role);
-        $("autoStatus").innerHTML = "Valitse listalta: <b>" + label.toUpperCase() + "</b>" + (s && s.name ? " (" + s.name.trim() + ")" : "");
-        let dev;
-        try { dev = await pickDevice(opts(), label); }
-        catch (e){ log(label + ": valinta ohitettiin –", errText(e)); failed.push(label); continue; }
-        remember(role, dev);
-        if (!(await use(dev))) failed.push(label);
+    // Bluefy ei yhdistä muistettuihin GATT-laitteisiin eikä avaa listoja peräkkäin →
+    // sama nappi yhdistää laitteet yksi kerrallaan (yksi napautus = yksi lista)
+    pickQueue = retry.slice();
+    const bad = missing.concat(failed);
+    if (pickQueue.length){
+      for (const [, , , label] of pickQueue){
+        const st = { "akku": bmsState, "lämmitin": heatState, "kylmälaukku": frState }[label];
+        st && st("", "Napauta yläreunasta Yhdistä: " + label);
       }
-      retry.length = 0;
-    }
-    const bad = missing.concat(failed, retry.map(r => r[3]));
-    $("autoStatus").textContent = bad.length
-      ? (retry.length ? "Victron yhdistyy itsestään. Paina Yhdistä kaikki ja valitse listoilta: " + retry.map(r => r[3]).join(", ") + "."
-                      : "Ei yhdistetty: " + bad.join(", ") + ".")
-      : "Kaikki laitteet yhdistetty.";
-    if (retry.length) for (const [, , , label] of retry){
-      const st = { "akku": bmsState, "lämmitin": heatState, "kylmälaukku": frState }[label];
-      st && st("", "Paina yläreunasta Yhdistä kaikki");
+      updatePickUi(); // Bluefy avaa listan vain suoraan napautuksesta → käyttäjä napauttaa nappia uudelleen
+    } else {
+      updatePickUi();
+      $("autoStatus").textContent = bad.length ? "Ei yhdistetty: " + bad.join(", ") + "." : "Kaikki laitteet yhdistetty.";
     }
   } catch (e){
     log("Automaattinen:", errText(e));
     $("autoStatus").textContent = "Automaattinen yhdistäminen epäonnistui: " + errText(e);
   } finally { connectingAll = false; }
 }
-$("connectAllBtn").onclick = () => connectAll(true);
+let pickQueue = [];
+function updatePickUi(){
+  const b = $("connectAllBtn");
+  if (pickQueue.length){
+    const [role, , , label] = pickQueue[0];
+    const s = recalled(role);
+    b.textContent = "Yhdistä: " + label;
+    $("autoStatus").innerHTML = (vicWatching.size ? "Victron yhdistetty. " : "") + "Napauta <b>Yhdistä: " + label + "</b> ja valitse listalta " +
+      (s && s.name ? "<b>" + s.name.trim() + "</b>" : label) +
+      (pickQueue.length > 1 ? ". Sen jälkeen: " + pickQueue.slice(1).map(r => r[3]).join(", ") + "." : ".");
+  } else b.textContent = "Yhdistä kaikki";
+}
+async function pickNext(){
+  const r = pickQueue.shift(); if (!r) return;
+  const [role, , use, label, opts] = r;
+  updatePickUi();
+  let dev;
+  try { dev = await pickDevice(opts(), label); }
+  catch (e){ log(label + ": valinta ohitettiin –", errText(e)); updatePickUi(); return; }
+  remember(role, dev);
+  updatePickUi();
+  await use(dev);
+  if (!pickQueue.length) $("autoStatus").textContent = "Valmis.";
+}
+$("connectAllBtn").onclick = () => pickQueue.length ? pickNext() : connectAll(true);
 $("forgetBtn").onclick = () => {
   for (const k of ["dev.bms", "dev.heat", "dev.fr", "dev.vic"]) { try { localStorage.removeItem("vaunu." + k); } catch {} }
   updateAutoUi(); $("autoStatus").textContent = "";
