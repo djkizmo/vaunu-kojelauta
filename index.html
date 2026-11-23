@@ -64,7 +64,7 @@ pre{font-size:11px;white-space:pre-wrap;word-break:break-all;background:var(--bg
 </head>
 <body>
 <header>
-  <h1>Vaunun kojelauta <small class="muted" style="font-size:12px;font-weight:400">v12</small></h1>
+  <h1>Vaunun kojelauta <small class="muted" style="font-size:12px;font-weight:400">v13</small></h1>
   <span id="clock" class="muted"></span>
 </header>
 
@@ -332,7 +332,7 @@ if ($("jserr").textContent.startsWith("Ladataan")){ $("jserr").innerHTML = "Sivu
 async function checkSupport(){
   for (let i = 0; i < 10 && !navigator.bluetooth; i++) await sleep(300);
   bt = navigator.bluetooth;
-  const s = ["Versio 12"];
+  const s = ["Versio 13"];
   s.push("Web Bluetooth: " + (bt ? "kyllä" : "EI"));
   if (bt){
     s.push("requestLEScan: " + (typeof bt.requestLEScan === "function" ? "kyllä" : "ei"));
@@ -1029,6 +1029,25 @@ function updateAutoUi(){
   if (recalledVic().length) names.push("Victron ×" + recalledVic().length);
   $("autoSaved").textContent = "Muistetut: " + names.join(", ");
 }
+// Muistettuun laitteeseen voi yhdistää vasta, kun selain on nähnyt sen lähettävän → odotetaan ensimmäistä lähetystä
+function waitAdvert(dev, ms = 20000){
+  return new Promise(res => {
+    if (typeof dev.watchAdvertisements !== "function") return res(false);
+    let done = false;
+    const finish = v => { if (done) return; done = true; dev.removeEventListener("advertisementreceived", h); res(v); };
+    const h = () => finish(true);
+    dev.addEventListener("advertisementreceived", h);
+    dev.watchAdvertisements().catch(e => { log((dev.name || "").trim(), "lähetysten kuuntelu epäonnistui:", errText(e)); finish(false); });
+    setTimeout(() => finish(false), ms);
+  });
+}
+async function autoUse(dev, use, setState, label){
+  if (await use(dev)) return null;                 // suora yhdistys onnistui
+  setState("wait", "Odotetaan, että " + label + " näkyy…");
+  const seen = await waitAdvert(dev);
+  log((dev.name || label).trim() + ":", seen ? "lähetys nähty – yhdistetään" : "ei lähetystä 20 s:ssa – yritetään silti");
+  return (await use(dev)) ? null : label;
+}
 let connectingAll = false;
 async function connectAll(byUser){
   if (connectingAll) return;
@@ -1041,15 +1060,16 @@ async function connectAll(byUser){
   try {
     const devs = await bt.getDevices();
     log("Automaattinen: selain muistaa", devs.length, "laitetta:", devs.map(d => d.name || d.id).join(", "));
-    const find = s => s && (devs.find(d => d.id === s.id) || (s.name ? devs.find(d => d.name === s.name) : null));
+    const nm = x => (x || "").trim();
+    const find = s => s && (devs.find(d => d.id === s.id) || (nm(s.name) ? devs.find(d => nm(d.name) === nm(s.name)) : null));
     const jobs = [];
-    const roles = [["bms", bms, bmsUse, "akku"], ["heat", heat, heatUse, "lämmitin"], ["fr", fr, frUse, "kylmälaukku"]];
+    const roles = [["bms", bms, bmsUse, bmsState, "akku"], ["heat", heat, heatUse, heatState, "lämmitin"], ["fr", fr, frUse, frState, "kylmälaukku"]];
     const missing = [];
-    for (const [role, obj, use, label] of roles){
+    for (const [role, obj, use, setState, label] of roles){
       const s = recalled(role); if (!s) continue;
       if (obj.dev && obj.dev.gatt && obj.dev.gatt.connected) continue;
       const d = find(s);
-      if (d) jobs.push(use(d).then(ok => ok ? null : label)); else missing.push(label);
+      if (d) jobs.push(autoUse(d, use, setState, label)); else missing.push(label);
     }
     const vic = recalledVic();
     if (vic.length){
