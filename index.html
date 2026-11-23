@@ -64,18 +64,19 @@ pre{font-size:11px;white-space:pre-wrap;word-break:break-all;background:var(--bg
 </head>
 <body>
 <header>
-  <h1>Vaunun kojelauta <small class="muted" style="font-size:12px;font-weight:400">v4</small></h1>
+  <h1>Vaunun kojelauta <small class="muted" style="font-size:12px;font-weight:400">v5</small></h1>
   <span id="clock" class="muted"></span>
 </header>
 
 <div id="jserr" class="warnbox" style="display:block">Ladataan… (jos tämä teksti ei katoa, sivun koodi ei käynnistynyt tässä selaimessa)</div>
 <script>
 // Vanhalla syntaksilla: näyttää virheet myös, jos pääkoodi ei toimi tässä selaimessa
-window.onerror = function (msg, src, line, col) {
+window.onerror = function (msg, src, line, col, err) {
   var b = document.getElementById("jserr");
   b.style.display = "block";
-  b.innerHTML = "<b>Sivun koodi kaatui:</b> " + msg + " (rivi " + line + ":" + col + ")<br>" +
-    "Selain: " + navigator.userAgent + "<br>Bluetooth: " + (navigator.bluetooth ? "on" : "ei");
+  var foreign = !line; // "Script error." = virhe selaimen omassa (lisätyssä) koodissa
+  b.innerHTML += "<br><b>" + (foreign ? "Selaimen oma koodi ilmoitti virheen" : "Sivun koodi kaatui") + ":</b> " + msg +
+    (line ? " (rivi " + line + ":" + col + ")" : "") + (err && err.stack ? "<br><small>" + String(err.stack).slice(0, 300) + "</small>" : "");
 };
 </script>
 
@@ -84,7 +85,7 @@ window.onerror = function (msg, src, line, col) {
 
 <div class="grid">
   <!-- AKKU -->
-  <section class="card" id="bms">
+  <section class="card">
     <div class="top">
       <h2><span class="dot" id="bmsDot"></span>Akku (WattCycle)</h2>
       <button id="bmsBtn">Yhdistä</button>
@@ -104,7 +105,7 @@ window.onerror = function (msg, src, line, col) {
   </section>
 
   <!-- AURINKO -->
-  <section class="card" id="mppt">
+  <section class="card">
     <div class="top">
       <h2><span class="dot" id="mpptDot"></span>Aurinko (SmartSolar)</h2>
       <button id="vicBtn">Kuuntele Victronia</button>
@@ -120,7 +121,7 @@ window.onerror = function (msg, src, line, col) {
   </section>
 
   <!-- LATURI -->
-  <section class="card" id="ac">
+  <section class="card">
     <div class="top">
       <h2><span class="dot" id="acDot"></span>Verkkolaturi (Blue Smart)</h2>
     </div>
@@ -134,7 +135,7 @@ window.onerror = function (msg, src, line, col) {
   </section>
 
   <!-- LÄMMITIN -->
-  <section class="card" id="heat">
+  <section class="card">
     <div class="top">
       <h2><span class="dot" id="heatDot"></span>Lämmitin (Vevor)</h2>
       <button id="heatBtn">Yhdistä</button>
@@ -174,10 +175,11 @@ window.onerror = function (msg, src, line, col) {
   <summary>Vianetsintä</summary>
   <p class="muted" style="font-size:13px" id="support"></p>
   <div class="ctl"><button class="ghost" id="copyLog">Kopioi loki</button><button class="ghost" id="clearLog">Tyhjennä</button></div>
-  <pre id="log"></pre>
+  <pre id="dbglog"></pre>
 </details>
 
 <script>
+(function () { // kaikki koodi omassa lohkossaan, ettei se törmää Bluefyn omiin nimiin
 "use strict";
 // ---------- apu ----------
 const $ = id => document.getElementById(id);
@@ -189,7 +191,7 @@ function log(...a){
   const t = new Date().toTimeString().slice(0, 8);
   logLines.push(t + " " + a.join(" "));
   if (logLines.length > 400) logLines.shift();
-  $("log").textContent = logLines.slice(-150).join("\n");
+  $("dbglog").textContent = logLines.slice(-150).join("\n");
 }
 function dot(id, s){ $(id).className = "dot" + (s ? " " + s : ""); }
 const store = {
@@ -262,14 +264,14 @@ $("saveBtn").onclick = () => {
   setTimeout(() => $("saved").textContent = "", 2000);
 };
 $("copyLog").onclick = () => navigator.clipboard?.writeText(logLines.join("\n"));
-$("clearLog").onclick = () => { logLines.length = 0; $("log").textContent = ""; };
+$("clearLog").onclick = () => { logLines.length = 0; $("dbglog").textContent = ""; };
 
 // ---------- tuen tarkistus ----------
-$("jserr").style.display = "none";
+if ($("jserr").textContent.startsWith("Ladataan")){ $("jserr").innerHTML = "Sivun koodi käynnistyi."; $("jserr").style.display = "none"; }
 async function checkSupport(){
   for (let i = 0; i < 10 && !navigator.bluetooth; i++) await sleep(300);
   bt = navigator.bluetooth;
-  const s = ["Versio 4"];
+  const s = ["Versio 5"];
   s.push("Web Bluetooth: " + (bt ? "kyllä" : "EI"));
   if (bt){
     s.push("requestLEScan: " + (typeof bt.requestLEScan === "function" ? "kyllä" : "ei"));
@@ -664,6 +666,8 @@ if ("serviceWorker" in navigator && window.isSecureContext) navigator.serviceWor
 
 // testikäyttöön
 window.__test = { tdtCmd, crcModbus, parseTdt, parseSolar, parseAc, parseHeater, heaterCmd, victronDecrypt, xor48, store, getVictronKeys, resetKeys: () => { victronKeys = null; }, onAdvert };
+window.addEventListener("unhandledrejection", e => log("Käsittelemätön virhe:", errText(e.reason)));
+})();
 </script>
 </body>
 </html>
