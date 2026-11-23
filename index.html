@@ -64,7 +64,7 @@ pre{font-size:11px;white-space:pre-wrap;word-break:break-all;background:var(--bg
 </head>
 <body>
 <header>
-  <h1>Vaunun kojelauta <small class="muted" style="font-size:12px;font-weight:400">v10</small></h1>
+  <h1>Vaunun kojelauta <small class="muted" style="font-size:12px;font-weight:400">v11</small></h1>
   <span id="clock" class="muted"></span>
 </header>
 
@@ -325,7 +325,7 @@ if ($("jserr").textContent.startsWith("Ladataan")){ $("jserr").innerHTML = "Sivu
 async function checkSupport(){
   for (let i = 0; i < 10 && !navigator.bluetooth; i++) await sleep(300);
   bt = navigator.bluetooth;
-  const s = ["Versio 10"];
+  const s = ["Versio 11"];
   s.push("Web Bluetooth: " + (bt ? "kyllä" : "EI"));
   if (bt){
     s.push("requestLEScan: " + (typeof bt.requestLEScan === "function" ? "kyllä" : "ei"));
@@ -542,18 +542,67 @@ function parseAc(p){
   return { state, err, v, a, t, ac };
 }
 const vicSeen = { mppt: 0, ac: 0 };
+// Muuntaa minkä tahansa datamuodon tavuiksi (DataView, ArrayBuffer, taulukko, hex- tai base64-merkkijono)
+function toBytes(v){
+  if (v === null || v === undefined) return null;
+  if (v instanceof Uint8Array) return v;
+  if (v instanceof DataView) return new Uint8Array(v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength));
+  if (v instanceof ArrayBuffer) return new Uint8Array(v);
+  if (ArrayBuffer.isView(v)) return new Uint8Array(v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength));
+  if (Array.isArray(v)) return Uint8Array.from(v);
+  if (typeof v === "string"){
+    const s = v.replace(/[\s:<>-]/g, "");
+    if (/^([0-9a-f]{2})+$/i.test(s)) return Uint8Array.from(s.match(/../g).map(x => parseInt(x, 16)));
+    try { return Uint8Array.from(atob(v), c => c.charCodeAt(0)); } catch { return null; }
+  }
+  if (typeof v === "object"){
+    if (v.buffer instanceof ArrayBuffer) return toBytes(new DataView(v.buffer, v.byteOffset || 0, v.byteLength ?? v.buffer.byteLength));
+    if (v.data !== undefined) return toBytes(v.data);
+    const ks = Object.keys(v);
+    if (ks.length && ks.every(k => /^\d+$/.test(k))) return Uint8Array.from(ks.sort((a, b) => a - b).map(k => v[k]));
+  }
+  return null;
+}
+function describe(v){
+  if (v === null || v === undefined) return String(v);
+  const t = typeof v, c = v.constructor && v.constructor.name;
+  let ks = ""; try { ks = typeof v === "object" ? Object.keys(v).slice(0, 6).join(",") : ""; } catch {}
+  return t + (c ? "/" + c : "") + (ks ? " {" + ks + "}" : "");
+}
+// Hakee Victronin (0x02E1 = 737) valmistajadatan eri selainten muodoista
+function victronMfr(ev){
+  const m = ev.manufacturerData;
+  if (!m) return null;
+  const ID = 0x02E1;
+  let v = null;
+  try {
+    if (typeof m.get === "function") v = m.get(ID) ?? m.get(String(ID));
+    if (!v && Array.isArray(m)){
+      const e = m.find(x => x && (x.companyIdentifier === ID || x.companyId === ID || x.id === ID || x.key === ID));
+      v = e ? (e.data ?? e.value) : (m.length && typeof m[0] === "number" ? m : null);
+    }
+    if (!v && typeof m === "object" && !(m instanceof DataView) && !(m instanceof ArrayBuffer))
+      for (const k of [ID, String(ID), "0x02e1", "0x2e1", "02e1", "2e1", "0x02E1", "02E1", "2E1"]) if (m[k] !== undefined){ v = m[k]; break; }
+    if (!v && typeof m.forEach === "function" && !Array.isArray(m)) m.forEach((val, key) => { if (!v && Number(key) === ID) v = val; });
+  } catch {}
+  let b = toBytes(v);
+  if (!b){ // koko valmistajadata yhtenä tavujonona (yritystunnus alussa)
+    const all = toBytes(m);
+    if (all && all.length > 3 && all[0] === 0xE1 && all[1] === 0x02) b = all.slice(2);
+  }
+  if (b && b.length > 3 && b[0] === 0xE1 && b[1] === 0x02 && b[2] === 0x10) b = b.slice(2); // yritystunnus mukana
+  return b;
+}
 let advCount = 0;
 async function onAdvert(ev){
-  if (advCount++ < 5){
-    let keys = "–";
-    try { keys = ev.manufacturerData ? Array.from(ev.manufacturerData.keys()).map(k => "0x" + k.toString(16)).join(",") : "ei valmistajadataa"; } catch (e){ keys = "virhe " + errText(e); }
-    const m0 = ev.manufacturerData?.get?.(0x02E1);
-    log("Victron: lähetys", ev.device?.name || ev.name || "?", "rssi", ev.rssi ?? "?", "valmistajat", keys,
-      m0 ? "data " + hex(new Uint8Array(m0.buffer.slice(m0.byteOffset, m0.byteOffset + m0.byteLength))) : "");
+  const d = victronMfr(ev);
+  if (advCount++ < 4){
+    let first = ""; const m = ev.manufacturerData;
+    try { if (m && typeof m === "object"){ const k = Object.keys(m)[0]; if (k !== undefined) first = " ensimmäinen[" + k + "]=" + describe(m[k]); } } catch {}
+    log("Victron: lähetys", ev.device?.name || ev.name || "?", "rssi", ev.rssi ?? "?", "muoto", describe(m) + first,
+      d ? "data " + hex(d) : "– Victron-dataa ei löytynyt");
   }
-  const md = ev.manufacturerData?.get?.(0x02E1);
-  if (!md) return;
-  const d = new Uint8Array(md.buffer.slice(md.byteOffset, md.byteOffset + md.byteLength));
+  if (!d) return;
   let res;
   try { res = await victronDecrypt(d); } catch (e){ log("Victron: purku epäonnistui", e.message); return; }
   if (!res) return;
@@ -925,7 +974,7 @@ $("frDown2").onclick = () => frAdjustRight(-1);
 if ("serviceWorker" in navigator && window.isSecureContext) navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then(r => r.update()).catch(() => {});
 
 // testikäyttöön
-window.__test = { frFrame, frDecode, frBuildSet, tdtCmd, crcModbus, parseTdt, parseSolar, parseAc, parseHeater, heaterCmd, victronDecrypt, xor48, store, getVictronKeys, resetKeys: () => { victronKeys = null; }, onAdvert };
+window.__test = { victronMfr, toBytes, frFrame, frDecode, frBuildSet, tdtCmd, crcModbus, parseTdt, parseSolar, parseAc, parseHeater, heaterCmd, victronDecrypt, xor48, store, getVictronKeys, resetKeys: () => { victronKeys = null; }, onAdvert };
 window.addEventListener("unhandledrejection", e => log("Käsittelemätön virhe:", errText(e.reason)));
 })();
 </script>
